@@ -37,13 +37,15 @@
 
     <div class="toolbar-row toolbar-inputs">
       <label class="field field-grow">
-        <span class="field-label">…or paste estimate JSON / drop a .json file</span>
+        <span class="field-label">…or paste estimate JSON / drop a .json or .pdf file</span>
         <textarea id="jsonInput" class="input textarea" rows="3"
           placeholder='Paste the estimates response, a single { "items": [...], "metadata": {...} }, or a raw items array.'></textarea>
       </label>
       <div class="field field-buttons">
+        <input id="pdfInput" type="file" accept=".pdf,application/pdf" hidden />
+        <button id="pdfBtn" class="btn btn-primary">Upload claim PDF</button>
         <input id="fileInput" type="file" accept=".json,application/json" hidden />
-        <button id="fileBtn" class="btn">Choose file…</button>
+        <button id="fileBtn" class="btn">Choose .json…</button>
         <button id="parseBtn" class="btn">Render pasted JSON</button>
         <button id="sampleBtn" class="btn btn-ghost">Load sample</button>
       </div>

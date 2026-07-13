@@ -365,6 +365,75 @@ async function fetchByJob() {
   }
 }
 
+// Upload a claim PDF to the FastAPI backend's AI parser and render the result.
+// Contract (backend/app/routers/estimates.py):
+//   POST {base}/api/estimates/{job_number}/parse?estimate_type=initial|final
+//   multipart body, field "file", content-type application/pdf.
+// The parse endpoint does NOT persist to BigQuery, so any job_number works —
+// a blank Job # falls back to 0 for this "just look at it" use.
+async function parsePdf(file) {
+  if (!file) return;
+  if (file.type && file.type !== "application/pdf" && !/\.pdf$/i.test(file.name)) {
+    return setStatus("That file isn't a PDF. Use a .json file for the other buttons.", "error");
+  }
+  const base = document.getElementById("apiBase").value.trim().replace(/\/+$/, "");
+  const estimateType = document.getElementById("estimateType").value;
+  const jobInput = document.getElementById("jobNumber").value.trim();
+  const job = jobInput || "0"; // parse doesn't persist; dummy job # is fine
+  if (!base) {
+    return setStatus("Enter your API base URL (where the FastAPI backend is reachable) before uploading a PDF.", "error");
+  }
+
+  const url = `${base}/api/estimates/${encodeURIComponent(job)}/parse?estimate_type=${encodeURIComponent(estimateType)}`;
+  const form = new FormData();
+  form.append("file", file, file.name);
+
+  setStatus(`Parsing “${file.name}” with the AI extractor… this usually takes 10–30s.`);
+  try {
+    const res = await fetch(url, { method: "POST", body: form, headers: { Accept: "application/json" } });
+    if (!res.ok) {
+      let detail = `${res.status} ${res.statusText}`;
+      try { const e = await res.json(); if (e && e.detail) detail = e.detail; } catch {}
+      throw new Error(`Parse failed (${detail}).`);
+    }
+    const data = await res.json(); // { items, summary, validation }
+    localStorage.setItem("cb_apiBase", base);
+
+    // Map the parse response into the { items, metadata } shape the renderer wants.
+    const s = data.summary || {};
+    const shaped = {
+      items: data.items || [],
+      metadata: {
+        deductible: s.deductible,
+        total_op: s.totalOP,
+        total_tax: s.totalTax,
+      },
+    };
+    renderFromRaw(shaped, estimateType, jobInput);
+
+    // Surface the backend's RCV/depreciation reconciliation so mis-reads are visible.
+    const v = data.validation;
+    if (v) {
+      const parts = [];
+      if (v.summaryRCVTotal != null) {
+        parts.push(`RCV ${v.rcvMatch ? "✓ matches" : `⚠ off by ${fmtUSD(v.difference)}`} summary`);
+      }
+      if (v.summaryDepreciationTotal != null) {
+        parts.push(`Depreciation ${v.depreciationMatch ? "✓" : `⚠ off by ${fmtUSD(v.depreciationDifference)}`}`);
+      }
+      if (parts.length) {
+        setStatus(`Parsed ${shaped.items.length} line item${shaped.items.length === 1 ? "" : "s"}. ${parts.join(" · ")}.`,
+          v.rcvMatch === false || v.depreciationMatch === false ? "" : "ok");
+      }
+    }
+  } catch (err) {
+    setStatus(
+      `${err.message} — if this is a CORS/network error, confirm the backend allows this origin (${location.origin}) and the POST/parse route.`,
+      "error"
+    );
+  }
+}
+
 function init() {
   const savedBase = localStorage.getItem("cb_apiBase");
   if (savedBase) document.getElementById("apiBase").value = savedBase;
@@ -380,6 +449,15 @@ function init() {
     const job = document.getElementById("jobNumber").value.trim();
     if (!txt) return setStatus("Paste some JSON first.", "error");
     renderFromRaw(txt, estimateType, job);
+  });
+
+  document.getElementById("pdfBtn").addEventListener("click", () =>
+    document.getElementById("pdfInput").click()
+  );
+  document.getElementById("pdfInput").addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (file) parsePdf(file);
+    e.target.value = ""; // allow re-selecting the same file
   });
 
   document.getElementById("fileBtn").addEventListener("click", () =>
@@ -421,6 +499,11 @@ function init() {
   tb.addEventListener("drop", (e) => {
     const file = e.dataTransfer.files[0];
     if (!file) return;
+    // Route PDFs to the AI parser; treat everything else as JSON text.
+    if (file.type === "application/pdf" || /\.pdf$/i.test(file.name)) {
+      parsePdf(file);
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => {
       document.getElementById("jsonInput").value = reader.result;
