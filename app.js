@@ -1,25 +1,28 @@
 /* =============================================================================
-   Claim Breakdown by Trade — standalone app
+   Claim Breakdown by Trade — standalone tool (no backend, no database)
    -----------------------------------------------------------------------------
-   Mirrors the claim-breakdown logic from the OI platform:
-     • groupByTrade()  → estimate-print/page.tsx
-     • non-recoverable dep = depreciationType === "non-recoverable" ? depreciation : 0
-     • RCV − Depreciation = ACV holds per line and per trade
+   Flow:
+     1. Upload a claim PDF.
+     2. The browser calls the Anthropic API DIRECTLY (same prompt + model the OI
+        platform backend uses) to extract every line item + a trade guess.
+     3. You review/correct the trade on each line.
+     4. Build a one-page summary (O&P · Tax · RCV · Depreciation · Non-Recoverable
+        Dep · ACV by trade) and Save as PDF.
 
-   O&P and Taxes columns are CONDITIONAL: they appear only if the loaded line
-   items actually carry per-line O&P / Tax values (see OP_KEYS / TAX_KEYS below).
-   If no line item has them, the columns are omitted entirely — no empty cells.
-   The two columns are independent: an estimate can have per-line tax but no O&P.
+   Nothing is persisted server-side. The only thing stored is your Anthropic API
+   key, in this browser's localStorage, so you don't retype it. Everything else
+   lives in the page for the session and is gone on refresh.
 
-   Note: the OI parser currently discards the per-line O&P/Tax columns, so data
-   from /api/estimates won't include them unless the extractor is updated to emit
-   an `op` and/or `tax` field per line item.
+   Math conventions mirror the OI platform:
+     • Non-recoverable dep = depreciationType === "non-recoverable" ? depreciation : 0
+     • RCV − Depreciation = ACV per line and per trade.
+     • O&P / Taxes are NOT tracked per trade — they exist only as estimate-wide
+       totals, shown in the summary Total row.
    ========================================================================== */
 
-// Trade display order — mirrors TRADE_OPTIONS in frontend/src/lib/trades.tsx
+// ------------------------------- Trades ---------------------------------- //
+// Display order — mirrors TRADE_OPTIONS in the OI platform.
 const TRADE_ORDER = [
-  "Not Categorized",
-  "Not Trade Related",
   "ROOF",
   "GUTTERS",
   "SIDING",
@@ -29,12 +32,12 @@ const TRADE_ORDER = [
   "FENCE",
   "GARAGE",
   "MISC",
+  "Not Trade Related",
+  "Not Categorized",
 ];
 
 // Accent colors — mirror TRADE_BADGE / TRADE_CHART_COLORS in the OI platform.
 const TRADE_COLORS = {
-  "Not Categorized": "#cbd5e1",
-  "Not Trade Related": "#94a3b8",
   ROOF: "#3b82f6",
   GUTTERS: "#10b981",
   SIDING: "#f59e0b",
@@ -44,37 +47,100 @@ const TRADE_COLORS = {
   FENCE: "#f97316",
   GARAGE: "#6366f1",
   MISC: "#64748b",
+  "Not Trade Related": "#94a3b8",
+  "Not Categorized": "#cbd5e1",
 };
 
-// Per-line O&P / Tax field names the app will recognize, in priority order.
-const OP_KEYS = ["op", "o_and_p", "oandp", "overhead_profit", "overheadProfit", "total_op"];
-const TAX_KEYS = ["tax", "taxes", "sales_tax", "salesTax", "total_tax"];
+// --------------------------- Anthropic config ---------------------------- //
+const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
+const ANTHROPIC_MODEL = "claude-sonnet-4-6"; // matches backend/app/routers/estimates.py
 
+// The extraction prompt. Reuses the OI backend's PARSE_PROMPT and adds a `trade`
+// classification + a richer summary (insurance, deductible) for the header.
+const PARSE_PROMPT = `Extract every line item from this insurance claim/estimate PDF and return JSON.
+
+The table has many columns. Typical column order from LEFT to RIGHT:
+Description | Quantity | Unit Price | Per | Age/Life | Condition | Total O&P | Total Taxes | RC (Replacement Cost) | Depreciation | ACV (Actual Cash Value)
+
+IMPORTANT:
+- "RC" is the Replacement Cost (same as RCV). This is the LARGE total cost for the line item.
+- The math rule is: RCV - Depreciation = ACV. Use this to verify you are reading the right columns.
+- Only extract per line item: Description, Quantity, RC/RCV, Depreciation, ACV, and a trade classification.
+- Per-line Total O&P and Total Taxes are NOT extracted per line — they belong in the summary section only.
+
+Classify each line item into exactly ONE "trade" from this list, based on the description:
+ROOF, GUTTERS, SIDING, WINDOWS, SOLAR, PAINT, FENCE, GARAGE, MISC, "Not Trade Related", "Not Categorized".
+- ROOF: shingles, felt, ridge, decking, flashing, drip edge, ice & water, roof vents, tear-off.
+- GUTTERS: gutters, downspouts, gutter guards.
+- SIDING: siding, house wrap, fascia, soffit, wrap.
+- WINDOWS: windows, screens, glazing, window wraps.
+- SOLAR: solar panels, PV, detach/reset solar.
+- PAINT: paint, primer, caulk (as a paint prep line).
+- FENCE: fencing, gates.
+- GARAGE: garage doors, openers.
+- MISC: general conditions, dumpster, permits, detach/reset (non-trade-specific), labor minimums.
+- "Not Trade Related": taxes, O&P lines, deductible lines, or administrative rows that are not physical work.
+- "Not Categorized": use ONLY if you genuinely cannot tell.
+
+Return ONLY valid JSON with this exact structure (no markdown, no explanation):
+{
+  "items": [
+    {
+      "number": "line item number as string",
+      "description": "line item description",
+      "quantity": "quantity with unit (e.g. '12.47 SQ', '110.00 LF', '1.00 EA')",
+      "rcv": number (RC/RCV column. Use 0.0 if blank or marked 'REVISED'/'PER BID'),
+      "depreciation": number (positive, e.g. 502.88. Use 0.0 if none),
+      "depreciationType": "recoverable" if shown in parentheses like (123.45), "non-recoverable" if in angle brackets like <123.45>,
+      "acv": number (ACV column, positive. Use 0.0 if blank or marked 'REVISED'/'PER BID'),
+      "trade": one of the trade values listed above
+    }
+  ],
+  "summary": {
+    "insurance_company": string or null,
+    "claim_number": string or null,
+    "date_of_loss": string or null,
+    "deductible": number or null,
+    "totalRCV": number or null,
+    "totalDepreciation": number or null,
+    "totalACV": number or null,
+    "totalOP": number or null (estimate-wide overhead & profit from the summary/totals section),
+    "totalTax": number or null (estimate-wide sales tax from the summary/totals section),
+    "totalRecoverableDepreciation": number or null
+  }
+}
+
+Rules:
+- Include EVERY line item, do not skip any.
+- Quantity must include the unit.
+- All numbers POSITIVE (rcv, depreciation, acv).
+- depreciation is 0.0 if none.
+- totalOP and totalTax come from the estimate's summary/totals section, NOT per line item.
+- For rcv, depreciation, acv on line items: ALWAYS return a number (0.0 if blank/unreadable). Never null.
+- For summary fields: null is acceptable if that figure is missing or unreadable.
+- VERIFY each line: rcv - depreciation ≈ acv. If it doesn't match, re-read the columns.`;
+
+// ------------------------------- State ----------------------------------- //
+// The parsed line items for the current claim. Trade is editable in the review
+// table before the summary is built. This is the only source of truth; it is
+// never sent anywhere except the one Anthropic parse call.
+let state = { items: [], summary: {} };
+
+// ------------------------------ Helpers ---------------------------------- //
 const fmtUSD = (n) =>
   (Number(n) || 0).toLocaleString("en-US", { style: "currency", currency: "USD" });
 
-function readNum(obj, keys) {
-  for (const k of keys) {
-    const v = obj[k];
-    if (v != null && v !== "" && !isNaN(Number(v))) return Number(v);
-  }
-  return null; // not present
-}
-const lineOP = (it) => readNum(it, OP_KEYS);
-const lineTax = (it) => readNum(it, TAX_KEYS);
+const esc = (s) =>
+  String(s ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-// Does any line carry per-line O&P / Tax? Each column is decided independently.
-function detectColumns(items) {
-  let hasOP = false, hasTax = false;
-  for (const it of items) {
-    if (!hasOP && lineOP(it) != null) hasOP = true;
-    if (!hasTax && lineTax(it) != null) hasTax = true;
-    if (hasOP && hasTax) break;
-  }
-  return { hasOP, hasTax };
+function setStatus(msg, kind) {
+  const el = document.getElementById("status");
+  el.textContent = msg || "";
+  el.className = "status" + (kind ? " " + kind : "");
 }
 
-// --- Natural sort for line numbers ("1", "1a", "21b") — from estimate-print/page.tsx
+// Natural sort for line numbers ("1", "1a", "21b") — from estimate-print/page.tsx
 function compareLineNumbers(a, b) {
   const tokenize = (s) => {
     const out = [];
@@ -85,22 +151,196 @@ function compareLineNumbers(a, b) {
     }
     return out;
   };
-  const ta = tokenize(a);
-  const tb = tokenize(b);
+  const ta = tokenize(a), tb = tokenize(b);
   for (let i = 0; i < Math.min(ta.length, tb.length); i++) {
     const x = ta[i], y = tb[i];
-    if (typeof x === "number" && typeof y === "number") {
-      if (x !== y) return x - y;
-    } else if (typeof x === "string" && typeof y === "string") {
-      if (x !== y) return x < y ? -1 : 1;
-    } else {
-      return typeof x === "number" ? -1 : 1;
-    }
+    if (typeof x === "number" && typeof y === "number") { if (x !== y) return x - y; }
+    else if (typeof x === "string" && typeof y === "string") { if (x !== y) return x < y ? -1 : 1; }
+    else return typeof x === "number" ? -1 : 1;
   }
   return ta.length - tb.length;
 }
 
-// --- Core grouping. One pass per trade computing the summary figures. ---
+// Normalize a trade string coming back from the model to one of our known keys.
+function normalizeTrade(t) {
+  if (!t) return "Not Categorized";
+  const up = String(t).trim();
+  const hit = TRADE_ORDER.find((x) => x.toLowerCase() === up.toLowerCase());
+  return hit || "Not Categorized";
+}
+
+// ------------------------- Anthropic PDF parse --------------------------- //
+// Read a File into a base64 string without blowing the call stack on big PDFs.
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Could not read the file."));
+    reader.onload = () => {
+      const bytes = new Uint8Array(reader.result);
+      let binary = "";
+      const CHUNK = 0x8000;
+      for (let i = 0; i < bytes.length; i += CHUNK) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+      }
+      resolve(btoa(binary));
+    };
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+async function parsePdf(file) {
+  if (!file) return;
+  if (file.type !== "application/pdf" && !/\.pdf$/i.test(file.name)) {
+    return setStatus("That isn't a PDF. Choose a .pdf claim/estimate.", "error");
+  }
+  const key = document.getElementById("apiKey").value.trim();
+  if (!key) return setStatus("Paste your Anthropic API key first.", "error");
+  if (file.size > 50_000_000) return setStatus("PDF is over 50MB — too large to parse in one pass.", "error");
+
+  setStatus(`Reading “${file.name}”…`);
+  let pdf_b64;
+  try {
+    pdf_b64 = await fileToBase64(file);
+  } catch (e) {
+    return setStatus(e.message, "error");
+  }
+
+  setStatus(`Parsing “${file.name}” with Claude… this usually takes 10–40s.`);
+  document.getElementById("pdfBtn").disabled = true;
+  try {
+    const res = await fetch(ANTHROPIC_URL, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": key,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+      body: JSON.stringify({
+        model: ANTHROPIC_MODEL,
+        max_tokens: 32000,
+        messages: [{
+          role: "user",
+          content: [
+            { type: "document", source: { type: "base64", media_type: "application/pdf", data: pdf_b64 } },
+            { type: "text", text: PARSE_PROMPT },
+          ],
+        }],
+      }),
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      const detail = data && data.error && data.error.message ? data.error.message : `${res.status} ${res.statusText}`;
+      throw new Error(`Anthropic API error: ${detail}`);
+    }
+    if (data.stop_reason === "max_tokens") {
+      throw new Error("The estimate is too large to parse in one pass (output was truncated). Try splitting the PDF.");
+    }
+
+    const text = (data.content || []).map((b) => b.text || "").join("").trim();
+    if (!text) throw new Error("Claude returned an empty response. Try again.");
+
+    // Strip code fences and pull out the JSON object.
+    const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error("Claude did not return JSON. Try again.");
+    const parsed = JSON.parse(match[0]);
+
+    const items = (parsed.items || []).map((it) => ({
+      number: it.number != null ? String(it.number) : "",
+      description: it.description || "",
+      quantity: it.quantity || "",
+      rcv: Number(it.rcv) || 0,
+      depreciation: Number(it.depreciation) || 0,
+      depreciationType: it.depreciationType === "non-recoverable" ? "non-recoverable" : "recoverable",
+      acv: Number(it.acv) || 0,
+      trade: normalizeTrade(it.trade),
+    }));
+    if (!items.length) throw new Error("No line items found in this PDF.");
+
+    state = { items, summary: parsed.summary || {} };
+    localStorage.setItem("cb_anthropicKey", key);
+
+    renderReview();
+    const guessed = items.filter((i) => i.trade !== "Not Categorized").length;
+    setStatus(
+      `Parsed ${items.length} line item${items.length === 1 ? "" : "s"}. ` +
+      `${guessed} pre-categorized — review the Trade column, then Build summary.`,
+      "ok"
+    );
+  } catch (err) {
+    // Anthropic browser CORS is enabled via the dangerous-direct-browser-access
+    // header; a "Failed to fetch" here is almost always a bad/absent key or no network.
+    setStatus(
+      `${err.message}${/failed to fetch/i.test(err.message) ? " — check your network and that the API key is valid." : ""}`,
+      "error"
+    );
+  } finally {
+    document.getElementById("pdfBtn").disabled = false;
+  }
+}
+
+// ---------------------- Review / categorize table ------------------------ //
+function tradeSelectHTML(selected, idAttr) {
+  const opts = TRADE_ORDER.map(
+    (t) => `<option value="${esc(t)}"${t === selected ? " selected" : ""}>${esc(t)}</option>`
+  ).join("");
+  return `<select class="input input-select trade-select" ${idAttr}>${opts}</select>`;
+}
+
+function renderReview() {
+  const body = document.getElementById("reviewBody");
+  const rows = state.items
+    .map((it, i) => {
+      const nonRec = it.depreciationType === "non-recoverable";
+      return `
+      <tr>
+        <td class="num">${esc(it.number)}</td>
+        <td class="left desc">${esc(it.description)}</td>
+        <td class="left">${esc(it.quantity)}</td>
+        <td>${fmtUSD(it.rcv)}</td>
+        <td>${fmtUSD(it.depreciation)}</td>
+        <td class="ctr">
+          <input type="checkbox" class="nonrec-chk" data-i="${i}" ${nonRec ? "checked" : ""}
+            title="Mark this line's depreciation as non-recoverable" />
+        </td>
+        <td>${fmtUSD(it.acv)}</td>
+        <td class="left">${tradeSelectHTML(it.trade, `data-i="${i}"`)}</td>
+      </tr>`;
+    })
+    .join("");
+  body.innerHTML = rows;
+
+  // Wire per-row trade selects.
+  body.querySelectorAll(".trade-select").forEach((sel) => {
+    sel.addEventListener("change", (e) => {
+      const i = Number(e.target.getAttribute("data-i"));
+      state.items[i].trade = e.target.value;
+    });
+  });
+  // Wire per-row non-recoverable toggles.
+  body.querySelectorAll(".nonrec-chk").forEach((chk) => {
+    chk.addEventListener("change", (e) => {
+      const i = Number(e.target.getAttribute("data-i"));
+      state.items[i].depreciationType = e.target.checked ? "non-recoverable" : "recoverable";
+    });
+  });
+
+  // Populate the "Set all to…" bulk select once.
+  const bulk = document.getElementById("bulkTradeSelect");
+  if (!bulk.options.length) {
+    bulk.innerHTML = TRADE_ORDER.map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join("");
+  }
+
+  document.getElementById("review").hidden = false;
+  document.getElementById("empty").style.display = "none";
+  document.getElementById("doc").hidden = true;
+  document.getElementById("downloadBtn").disabled = true;
+  document.getElementById("review").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+// ------------------------- Grouping + summary ---------------------------- //
 function groupByTrade(items) {
   const byTrade = new Map();
   for (const it of items) {
@@ -108,107 +348,60 @@ function groupByTrade(items) {
     if (!byTrade.has(t)) byTrade.set(t, []);
     byTrade.get(t).push(it);
   }
-
-  // Ordered trades first (TRADE_ORDER), then any unrecognized trade values.
   const ordered = TRADE_ORDER.filter((t) => byTrade.has(t));
   const extras = [...byTrade.keys()].filter((t) => !TRADE_ORDER.includes(t)).sort();
-  const tradeKeys = [...ordered, ...extras];
-
-  return tradeKeys.map((t) => {
+  return [...ordered, ...extras].map((t) => {
     const its = byTrade.get(t);
-    let rcv = 0, dep = 0, nonRecDep = 0, acv = 0, op = 0, tax = 0;
+    let rcv = 0, dep = 0, nonRecDep = 0, acv = 0;
     for (const it of its) {
-      const r = Number(it.rcv) || 0;
       const d = Number(it.depreciation) || 0;
-      const a = Number(it.acv) || 0;
-      rcv += r;
+      rcv += Number(it.rcv) || 0;
       dep += d;
-      acv += a;
+      acv += Number(it.acv) || 0;
       if (it.depreciationType === "non-recoverable") nonRecDep += d;
-      op += lineOP(it) || 0;
-      tax += lineTax(it) || 0;
     }
     return {
       trade: t,
       color: TRADE_COLORS[t] || "#94a3b8",
       items: [...its].sort((x, y) => compareLineNumbers(x.number, y.number)),
-      rcv, dep, nonRecDep, acv, op, tax,
+      rcv, dep, nonRecDep, acv,
     };
   });
 }
 
-// --- Normalize whatever JSON shape was provided into { items, metadata }. -----
-function normalizeInput(raw, estimateType) {
-  if (!raw) throw new Error("No data provided.");
-  let obj = raw;
-  if (typeof raw === "string") obj = JSON.parse(raw);
-
-  if (obj && (obj.initial || obj.final)) {
-    const group = estimateType === "initial" ? obj.initial : obj.final;
-    if (!group || !Array.isArray(group.items) || group.items.length === 0) {
-      throw new Error(`No ${estimateType} estimate line items found in this data.`);
-    }
-    return { items: group.items, metadata: group.metadata || {} };
-  }
-  if (obj && Array.isArray(obj.items)) {
-    return { items: obj.items, metadata: obj.metadata || {} };
-  }
-  if (Array.isArray(obj)) {
-    return { items: obj, metadata: {} };
-  }
-  throw new Error("Unrecognized JSON shape. Expect an estimates response, a { items, metadata } object, or an items array.");
-}
-
-// ============================== RENDERING ================================= //
-const esc = (s) =>
-  String(s ?? "").replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-
-const money = (v) => (v == null ? '<span class="dash">—</span>' : fmtUSD(v));
-
-function renderDoc({ items, metadata, estimateType, jobLabel }) {
+function renderDoc() {
+  const items = state.items;
+  const md = state.summary || {};
+  const includeDetail = document.getElementById("detailToggle").checked;
   const groups = groupByTrade(items);
-  const { hasOP, hasTax } = detectColumns(items);
 
   const totals = groups.reduce(
-    (acc, g) => {
-      acc.rcv += g.rcv; acc.dep += g.dep; acc.nonRecDep += g.nonRecDep;
-      acc.acv += g.acv; acc.op += g.op; acc.tax += g.tax;
-      return acc;
-    },
-    { rcv: 0, dep: 0, nonRecDep: 0, acv: 0, op: 0, tax: 0 }
+    (a, g) => { a.rcv += g.rcv; a.dep += g.dep; a.nonRecDep += g.nonRecDep; a.acv += g.acv; return a; },
+    { rcv: 0, dep: 0, nonRecDep: 0, acv: 0 }
   );
-
-  const md = metadata || {};
-  const typeLabel = estimateType === "initial" ? "Initial" : "Final";
+  const totalOP = md.totalOP != null ? Number(md.totalOP) : null;
+  const totalTax = md.totalTax != null ? Number(md.totalTax) : null;
 
   const metaRows = [
-    ["Job #", jobLabel || "—"],
-    ["Estimate Type", typeLabel],
     ["Insurance", md.insurance_company || "—"],
-    ["Date of Loss", md.claim_date || "—"],
+    ["Claim #", md.claim_number || "—"],
+    ["Date of Loss", md.date_of_loss || "—"],
     ["Deductible", md.deductible != null ? fmtUSD(md.deductible) : "—"],
+    ["Line Items", String(items.length)],
     ["Printed", new Date().toLocaleDateString("en-US")],
   ];
 
-  // ---------- PAGE 1: Trade summary ----------
-  const sumHead =
-    `<th class="left">Trade</th>` +
-    (hasOP ? `<th>O&amp;P</th>` : ``) +
-    (hasTax ? `<th>Taxes</th>` : ``) +
-    `<th>RCV</th><th>Depreciation</th><th>Non-Rec. Dep.</th><th>ACV</th>`;
-
+  // ---------- PAGE 1: one-page trade summary ----------
+  // O&P and Taxes are estimate-wide only: per-trade cells show "—", the Total
+  // row carries the estimate totals.
+  const dash = '<span class="dash">—</span>';
   const summaryRows = groups
     .map(
       (g) => `
       <tr>
-        <td class="left">
-          <span class="trade-cell">
-            <span class="trade-swatch" style="background:${g.color}"></span>${esc(g.trade)}
-          </span>
-        </td>
-        ${hasOP ? `<td>${fmtUSD(g.op)}</td>` : ``}
-        ${hasTax ? `<td>${fmtUSD(g.tax)}</td>` : ``}
+        <td class="left"><span class="trade-cell"><span class="trade-swatch" style="background:${g.color}"></span>${esc(g.trade)}</span></td>
+        <td>${dash}</td>
+        <td>${dash}</td>
         <td>${fmtUSD(g.rcv)}</td>
         <td>${fmtUSD(g.dep)}</td>
         <td>${fmtUSD(g.nonRecDep)}</td>
@@ -217,26 +410,12 @@ function renderDoc({ items, metadata, estimateType, jobLabel }) {
     )
     .join("");
 
-  const sumFoot =
-    `<td class="left">Total</td>` +
-    (hasOP ? `<td>${fmtUSD(totals.op)}</td>` : ``) +
-    (hasTax ? `<td>${fmtUSD(totals.tax)}</td>` : ``) +
-    `<td>${fmtUSD(totals.rcv)}</td><td>${fmtUSD(totals.dep)}</td>` +
-    `<td>${fmtUSD(totals.nonRecDep)}</td><td>${fmtUSD(totals.acv)}</td>`;
-
-  const opTaxNote =
-    hasOP || hasTax
-      ? `${hasOP && hasTax ? "O&amp;P and Taxes are" : hasOP ? "O&amp;P is" : "Taxes are"} the per-line amount${
-          hasOP && hasTax ? "s" : ""
-        } carried on the estimate; RCV already includes ${hasOP && hasTax ? "them" : "it"}. `
-      : ``;
-
   const page1 = `
     <section class="page">
       <div class="doc-head">
         <p class="doc-eyebrow">Insurance Claim · Trade Breakdown</p>
-        <h1 class="doc-title">${esc(jobLabel ? `Job ${jobLabel}` : "Claim Summary")} — ${typeLabel} Estimate</h1>
-        <p class="doc-sub">${esc(md.insurance_company || "")}${md.insurance_company && md.claim_date ? " · " : ""}${md.claim_date ? "Loss dated " + esc(md.claim_date) : ""}</p>
+        <h1 class="doc-title">Claim Summary by Trade</h1>
+        <p class="doc-sub">${esc(md.insurance_company || "")}${md.insurance_company && md.date_of_loss ? " · " : ""}${md.date_of_loss ? "Loss dated " + esc(md.date_of_loss) : ""}</p>
       </div>
 
       <div class="meta-grid">
@@ -245,210 +424,94 @@ function renderDoc({ items, metadata, estimateType, jobLabel }) {
 
       <p class="section-label">Summary by Trade</p>
       <table class="summary">
-        <thead><tr>${sumHead}</tr></thead>
+        <thead><tr>
+          <th class="left">Trade</th><th>O&amp;P</th><th>Taxes</th>
+          <th>RCV</th><th>Depreciation</th><th>Non-Rec. Dep.</th><th>ACV</th>
+        </tr></thead>
         <tbody>${summaryRows}</tbody>
-        <tfoot><tr>${sumFoot}</tr></tfoot>
+        <tfoot><tr>
+          <td class="left">Total</td>
+          <td>${totalOP != null ? fmtUSD(totalOP) : dash}</td>
+          <td>${totalTax != null ? fmtUSD(totalTax) : dash}</td>
+          <td>${fmtUSD(totals.rcv)}</td>
+          <td>${fmtUSD(totals.dep)}</td>
+          <td>${fmtUSD(totals.nonRecDep)}</td>
+          <td>${fmtUSD(totals.acv)}</td>
+        </tr></tfoot>
       </table>
 
       <p class="footnote">
-        <strong>RCV − Depreciation = ACV.</strong> ${opTaxNote}Non-Recoverable Depreciation is
-        the portion insurance will not reimburse and is a subset of Depreciation.
+        <strong>RCV − Depreciation = ACV.</strong> O&amp;P and Taxes are estimate-wide (RCV already
+        includes them) and are not split per trade, so per-trade cells show “—” and the estimate totals
+        appear in the Total row. Non-Recoverable Depreciation is the portion insurance will not reimburse
+        and is a subset of Depreciation.
       </p>
     </section>`;
 
-  // ---------- PAGES 2+: one page per trade ----------
-  const lineHead =
-    `<th class="left">Line&nbsp;#</th><th class="left">Description</th><th class="left">Quantity</th>` +
-    (hasOP ? `<th>O&amp;P</th>` : ``) +
-    (hasTax ? `<th>Taxes</th>` : ``) +
-    `<th>RCV</th><th>Depreciation</th><th>Non-Rec. Dep.</th><th>ACV</th>`;
-
-  const tradePages = groups
-    .map((g) => {
-      const rows = g.items
-        .map((it) => {
-          const nb = it.is_billable === false ? '<span class="nb-tag">NON-BILL</span>' : "";
-          const nr = it.depreciationType === "non-recoverable" ? '<span class="nr-tag">NON-REC</span>' : "";
-          return `
-          <tr>
-            <td class="num">${esc(it.number)}</td>
-            <td class="left desc">${esc(it.description)}${nb}${nr}</td>
-            <td class="left">${esc(it.quantity ?? "")}</td>
-            ${hasOP ? `<td>${money(lineOP(it))}</td>` : ``}
-            ${hasTax ? `<td>${money(lineTax(it))}</td>` : ``}
-            <td>${fmtUSD(it.rcv)}</td>
-            <td>${fmtUSD(it.depreciation)}</td>
-            <td>${it.depreciationType === "non-recoverable" ? fmtUSD(it.depreciation) : '<span class="dash">—</span>'}</td>
-            <td>${fmtUSD(it.acv)}</td>
-          </tr>`;
-        })
-        .join("");
-
-      const foot =
-        `<td class="left" colspan="3">${esc(g.trade)} total (${g.items.length} line${g.items.length === 1 ? "" : "s"})</td>` +
-        (hasOP ? `<td>${fmtUSD(g.op)}</td>` : ``) +
-        (hasTax ? `<td>${fmtUSD(g.tax)}</td>` : ``) +
-        `<td>${fmtUSD(g.rcv)}</td><td>${fmtUSD(g.dep)}</td>` +
-        `<td>${fmtUSD(g.nonRecDep)}</td><td>${fmtUSD(g.acv)}</td>`;
-
-      return `
-      <section class="page">
-        <div class="trade-page-head">
-          <div class="trade-page-title">
-            <span class="bar" style="background:${g.color}"></span>
-            <h2>${esc(g.trade)}</h2>
+  // ---------- Optional detail pages: one per trade ----------
+  let detailPages = "";
+  if (includeDetail) {
+    detailPages = groups
+      .map((g) => {
+        const rows = g.items
+          .map((it) => {
+            const nr = it.depreciationType === "non-recoverable" ? '<span class="nr-tag">NON-REC</span>' : "";
+            return `
+            <tr>
+              <td class="num">${esc(it.number)}</td>
+              <td class="left desc">${esc(it.description)}${nr}</td>
+              <td class="left">${esc(it.quantity)}</td>
+              <td>${fmtUSD(it.rcv)}</td>
+              <td>${fmtUSD(it.depreciation)}</td>
+              <td>${it.depreciationType === "non-recoverable" ? fmtUSD(it.depreciation) : dash}</td>
+              <td>${fmtUSD(it.acv)}</td>
+            </tr>`;
+          })
+          .join("");
+        return `
+        <section class="page">
+          <div class="trade-page-head">
+            <div class="trade-page-title"><span class="bar" style="background:${g.color}"></span><h2>${esc(g.trade)}</h2></div>
+            <div class="trade-page-totals">
+              <div class="tpt"><div class="k">RCV</div><div class="v">${fmtUSD(g.rcv)}</div></div>
+              <div class="tpt"><div class="k">Depreciation</div><div class="v">${fmtUSD(g.dep)}</div></div>
+              <div class="tpt"><div class="k">ACV</div><div class="v">${fmtUSD(g.acv)}</div></div>
+            </div>
           </div>
-          <div class="trade-page-totals">
-            <div class="tpt"><div class="k">RCV</div><div class="v">${fmtUSD(g.rcv)}</div></div>
-            <div class="tpt"><div class="k">Depreciation</div><div class="v">${fmtUSD(g.dep)}</div></div>
-            <div class="tpt"><div class="k">ACV</div><div class="v">${fmtUSD(g.acv)}</div></div>
-          </div>
-        </div>
-
-        <table class="lines">
-          <thead><tr>${lineHead}</tr></thead>
-          <tbody>${rows}</tbody>
-          <tfoot><tr>${foot}</tr></tfoot>
-        </table>
-      </section>`;
-    })
-    .join("");
+          <table class="lines">
+            <thead><tr>
+              <th class="left">Line&nbsp;#</th><th class="left">Description</th><th class="left">Quantity</th>
+              <th>RCV</th><th>Depreciation</th><th>Non-Rec. Dep.</th><th>ACV</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+            <tfoot><tr>
+              <td class="left" colspan="3">${esc(g.trade)} total (${g.items.length} line${g.items.length === 1 ? "" : "s"})</td>
+              <td>${fmtUSD(g.rcv)}</td><td>${fmtUSD(g.dep)}</td><td>${fmtUSD(g.nonRecDep)}</td><td>${fmtUSD(g.acv)}</td>
+            </tr></tfoot>
+          </table>
+        </section>`;
+      })
+      .join("");
+  }
 
   const docEl = document.getElementById("doc");
-  docEl.innerHTML = page1 + tradePages;
+  docEl.innerHTML = page1 + detailPages;
   docEl.hidden = false;
   document.getElementById("empty").style.display = "none";
-  document.getElementById("printBtn").disabled = false;
-  document.title = `Claim Breakdown${jobLabel ? " — Job " + jobLabel : ""} (${typeLabel})`;
+  document.getElementById("downloadBtn").disabled = false;
+  document.title = "Claim Breakdown by Trade";
+  docEl.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-// ============================== I/O + WIRING ============================== //
-function setStatus(msg, kind) {
-  const el = document.getElementById("status");
-  el.textContent = msg || "";
-  el.className = "status" + (kind ? " " + kind : "");
-}
-
-function renderFromRaw(raw, estimateType, jobLabel) {
-  try {
-    const { items, metadata } = normalizeInput(raw, estimateType);
-    renderDoc({ items, metadata, estimateType, jobLabel });
-    const { hasOP, hasTax } = detectColumns(items);
-    const cols = [hasOP && "O&P", hasTax && "Taxes"].filter(Boolean);
-    const note = cols.length ? ` Per-line ${cols.join(" & ")} detected.` : " No per-line O&P/Tax on this estimate — those columns omitted.";
-    setStatus(`Rendered ${items.length} line item${items.length === 1 ? "" : "s"}.${note}`, "ok");
-  } catch (err) {
-    setStatus(err.message || String(err), "error");
-  }
-}
-
-async function fetchByJob() {
-  const job = document.getElementById("jobNumber").value.trim();
-  const base = document.getElementById("apiBase").value.trim().replace(/\/+$/, "");
-  const estimateType = document.getElementById("estimateType").value;
-  if (!job) return setStatus("Enter a Job # first.", "error");
-  if (!base) return setStatus("Enter your API base URL (where the FastAPI backend is reachable).", "error");
-
-  const url = `${base}/api/estimates/${encodeURIComponent(job)}`;
-  setStatus(`Loading ${url} …`);
-  try {
-    const res = await fetch(url, { headers: { Accept: "application/json" } });
-    if (!res.ok) throw new Error(`Request failed (${res.status} ${res.statusText}).`);
-    const data = await res.json();
-    localStorage.setItem("cb_apiBase", base);
-    renderFromRaw(data, estimateType, job);
-  } catch (err) {
-    setStatus(
-      `${err.message} — if this is a CORS or network error, confirm the backend allows this origin, or paste the JSON below instead.`,
-      "error"
-    );
-  }
-}
-
-// Upload a claim PDF to the FastAPI backend's AI parser and render the result.
-// Contract (backend/app/routers/estimates.py):
-//   POST {base}/api/estimates/{job_number}/parse?estimate_type=initial|final
-//   multipart body, field "file", content-type application/pdf.
-// The parse endpoint does NOT persist to BigQuery, so any job_number works —
-// a blank Job # falls back to 0 for this "just look at it" use.
-async function parsePdf(file) {
-  if (!file) return;
-  if (file.type && file.type !== "application/pdf" && !/\.pdf$/i.test(file.name)) {
-    return setStatus("That file isn't a PDF. Use a .json file for the other buttons.", "error");
-  }
-  const base = document.getElementById("apiBase").value.trim().replace(/\/+$/, "");
-  const estimateType = document.getElementById("estimateType").value;
-  const jobInput = document.getElementById("jobNumber").value.trim();
-  const job = jobInput || "0"; // parse doesn't persist; dummy job # is fine
-  if (!base) {
-    return setStatus("Enter your API base URL (where the FastAPI backend is reachable) before uploading a PDF.", "error");
-  }
-
-  const url = `${base}/api/estimates/${encodeURIComponent(job)}/parse?estimate_type=${encodeURIComponent(estimateType)}`;
-  const form = new FormData();
-  form.append("file", file, file.name);
-
-  setStatus(`Parsing “${file.name}” with the AI extractor… this usually takes 10–30s.`);
-  try {
-    const res = await fetch(url, { method: "POST", body: form, headers: { Accept: "application/json" } });
-    if (!res.ok) {
-      let detail = `${res.status} ${res.statusText}`;
-      try { const e = await res.json(); if (e && e.detail) detail = e.detail; } catch {}
-      throw new Error(`Parse failed (${detail}).`);
-    }
-    const data = await res.json(); // { items, summary, validation }
-    localStorage.setItem("cb_apiBase", base);
-
-    // Map the parse response into the { items, metadata } shape the renderer wants.
-    const s = data.summary || {};
-    const shaped = {
-      items: data.items || [],
-      metadata: {
-        deductible: s.deductible,
-        total_op: s.totalOP,
-        total_tax: s.totalTax,
-      },
-    };
-    renderFromRaw(shaped, estimateType, jobInput);
-
-    // Surface the backend's RCV/depreciation reconciliation so mis-reads are visible.
-    const v = data.validation;
-    if (v) {
-      const parts = [];
-      if (v.summaryRCVTotal != null) {
-        parts.push(`RCV ${v.rcvMatch ? "✓ matches" : `⚠ off by ${fmtUSD(v.difference)}`} summary`);
-      }
-      if (v.summaryDepreciationTotal != null) {
-        parts.push(`Depreciation ${v.depreciationMatch ? "✓" : `⚠ off by ${fmtUSD(v.depreciationDifference)}`}`);
-      }
-      if (parts.length) {
-        setStatus(`Parsed ${shaped.items.length} line item${shaped.items.length === 1 ? "" : "s"}. ${parts.join(" · ")}.`,
-          v.rcvMatch === false || v.depreciationMatch === false ? "" : "ok");
-      }
-    }
-  } catch (err) {
-    setStatus(
-      `${err.message} — if this is a CORS/network error, confirm the backend allows this origin (${location.origin}) and the POST/parse route.`,
-      "error"
-    );
-  }
-}
-
+// ------------------------------ Wiring ----------------------------------- //
 function init() {
-  const savedBase = localStorage.getItem("cb_apiBase");
-  if (savedBase) document.getElementById("apiBase").value = savedBase;
+  const savedKey = localStorage.getItem("cb_anthropicKey");
+  if (savedKey) document.getElementById("apiKey").value = savedKey;
 
-  document.getElementById("fetchBtn").addEventListener("click", fetchByJob);
-  document.getElementById("jobNumber").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") fetchByJob();
-  });
-
-  document.getElementById("parseBtn").addEventListener("click", () => {
-    const txt = document.getElementById("jsonInput").value.trim();
-    const estimateType = document.getElementById("estimateType").value;
-    const job = document.getElementById("jobNumber").value.trim();
-    if (!txt) return setStatus("Paste some JSON first.", "error");
-    renderFromRaw(txt, estimateType, job);
+  document.getElementById("clearKeyBtn").addEventListener("click", () => {
+    localStorage.removeItem("cb_anthropicKey");
+    document.getElementById("apiKey").value = "";
+    setStatus("Saved key forgotten.", "ok");
   });
 
   document.getElementById("pdfBtn").addEventListener("click", () =>
@@ -460,57 +523,63 @@ function init() {
     e.target.value = ""; // allow re-selecting the same file
   });
 
-  document.getElementById("fileBtn").addEventListener("click", () =>
-    document.getElementById("fileInput").click()
-  );
-  document.getElementById("fileInput").addEventListener("change", (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      document.getElementById("jsonInput").value = reader.result;
-      const estimateType = document.getElementById("estimateType").value;
-      const job = document.getElementById("jobNumber").value.trim();
-      renderFromRaw(reader.result, estimateType, job);
-    };
-    reader.onerror = () => setStatus("Could not read that file.", "error");
-    reader.readAsText(file);
+  document.getElementById("buildBtn").addEventListener("click", () => {
+    if (!state.items.length) return setStatus("Nothing to build yet — upload a PDF first.", "error");
+    renderDoc();
   });
 
+  // "Set all to…" bulk trade apply.
+  document.getElementById("bulkTradeBtn").addEventListener("click", () => {
+    const t = document.getElementById("bulkTradeSelect").value;
+    state.items.forEach((it) => (it.trade = t));
+    renderReview();
+    setStatus(`Set all ${state.items.length} line items to ${t}.`, "ok");
+  });
+
+  document.getElementById("downloadBtn").addEventListener("click", () => window.print());
+
+  // Sample — renders the bundled example so you can see the output with no API call.
   document.getElementById("sampleBtn").addEventListener("click", async () => {
     setStatus("Loading sample…");
     try {
       const res = await fetch("sample-data.json");
       const data = await res.json();
-      document.getElementById("jobNumber").value = "1234";
-      renderFromRaw(data, document.getElementById("estimateType").value, "1234");
+      const group = data.final || data.initial || data;
+      const items = (group.items || []).map((it) => ({
+        number: it.number != null ? String(it.number) : "",
+        description: it.description || "",
+        quantity: it.quantity || "",
+        rcv: Number(it.rcv) || 0,
+        depreciation: Number(it.depreciation) || 0,
+        depreciationType: it.depreciationType === "non-recoverable" ? "non-recoverable" : "recoverable",
+        acv: Number(it.acv) || 0,
+        trade: normalizeTrade(it.trade),
+      }));
+      const m = group.metadata || {};
+      state = {
+        items,
+        summary: {
+          insurance_company: m.insurance_company,
+          claim_number: m.claim_number,
+          date_of_loss: m.claim_date || m.date_of_loss,
+          deductible: m.deductible,
+          totalOP: m.total_op,
+          totalTax: m.total_tax,
+        },
+      };
+      renderReview();
+      setStatus(`Loaded sample: ${items.length} line items. Review trades, then Build summary.`, "ok");
     } catch {
       setStatus("Could not load sample-data.json (serve the folder over HTTP, not file://).", "error");
     }
   });
 
-  document.getElementById("printBtn").addEventListener("click", () => window.print());
-
-  // Drag & drop a .json file anywhere on the toolbar.
+  // Drag & drop a PDF anywhere on the toolbar.
   const tb = document.getElementById("toolbar");
-  ["dragover", "drop"].forEach((evt) =>
-    tb.addEventListener(evt, (e) => e.preventDefault())
-  );
+  ["dragover", "drop"].forEach((evt) => tb.addEventListener(evt, (e) => e.preventDefault()));
   tb.addEventListener("drop", (e) => {
     const file = e.dataTransfer.files[0];
-    if (!file) return;
-    // Route PDFs to the AI parser; treat everything else as JSON text.
-    if (file.type === "application/pdf" || /\.pdf$/i.test(file.name)) {
-      parsePdf(file);
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      document.getElementById("jsonInput").value = reader.result;
-      renderFromRaw(reader.result, document.getElementById("estimateType").value,
-        document.getElementById("jobNumber").value.trim());
-    };
-    reader.readAsText(file);
+    if (file) parsePdf(file);
   });
 }
 

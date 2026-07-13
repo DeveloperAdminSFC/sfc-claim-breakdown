@@ -1,69 +1,63 @@
 # Claim Breakdown by Trade
 
-A standalone, zero-build web app that renders an insurance claim as a print-ready
-breakdown: a trade-summary sheet on page 1, then one page per trade listing every
-line item. Open `index.html`, load a claim, and Print / Save PDF.
+A standalone, zero-build, zero-backend web tool. Upload an insurance claim/estimate
+PDF, let Claude extract every line item, categorize each line by trade, and download
+a one-page summary (O&P · Taxes · RCV · Depreciation · Non-Recoverable Dep. · ACV).
+
+**Nothing is saved.** No server, no database. The PDF is parsed by a single direct
+call from your browser to the Anthropic API. The only thing stored is your API key,
+in this browser's localStorage, so you don't retype it.
 
 ## Run it
 
-- **Locally:** serve the folder over HTTP (needed so the sample and file loads work).
-  ```
-  python3 -m http.server 8080
-  # then open http://localhost:8080
-  ```
-  Opening `index.html` directly via `file://` works for pasting JSON, but the
-  "Load sample" button needs HTTP.
-- **Deploy:** drop the folder onto Netlify (or any static host). No build step.
+Serve the folder over HTTP (needed so the sample load works):
 
-## Loading a claim — three ways
+```
+python -m http.server 8080
+# then open http://localhost:8080
+```
 
-1. **By Job #** — enter the Job #, pick Initial/Final, set your **API base URL**
-   (where the FastAPI backend is reachable), and click **Load**. The app calls
-   `GET {API_BASE}/api/estimates/{job_number}`. The backend must allow this
-   origin (CORS).
-2. **Paste JSON** — paste into the textarea and click **Render pasted JSON**.
-3. **File** — choose or drag-drop a `.json` file onto the toolbar.
+## Use it
 
-Accepted JSON shapes:
-- Full estimates response: `{ "initial": { "items": [...], "metadata": {...} }, "final": {...} }`
-- A single group: `{ "items": [...], "metadata": {...} }`
-- A raw items array: `[ { ... }, { ... } ]`
+1. **Paste your Anthropic API key** (`sk-ant-…`) into the key field. It stays in
+   your browser — click **Forget** to clear it.
+2. Click **Upload claim PDF** (or drag a `.pdf` onto the toolbar).
+3. Claude extracts every line item and pre-guesses a trade for each. **Review the
+   Trade column** and fix any that are wrong (per-row dropdown, or **Set all to…**
+   for a bulk change). You can also toggle a line's **Non-Rec.** depreciation.
+4. Click **Build summary**, then **Download summary (PDF)** (Print / Save as PDF).
 
-## The sheet
+No key handy? Click **Load sample** to see the whole flow with bundled example data.
+
+## The numbers
 
 **Page 1 — Summary by Trade**
 
 | Trade | O&P | Taxes | RCV | Depreciation | Non-Rec. Dep. | ACV |
 |---|---|---|---|---|---|---|
 
-**Pages 2+** — one page per trade: `Line # | Description | Quantity | RCV | Depreciation | Non-Rec. Dep. | ACV`, with a per-trade total row.
+- **RCV − Depreciation = ACV** holds per line and per trade.
+- **Non-Recoverable Depreciation** is derived: `depreciationType === "non-recoverable" ? depreciation : 0`.
+  It is a subset of Depreciation.
+- **O&P and Taxes** are estimate-wide only (RCV already includes them), so per-trade
+  cells show `—` and the estimate totals appear in the Total row.
+- Tick **Include per-trade detail pages** before building to append one page per
+  trade listing every line item.
 
-## Where the numbers come from (mirrors the OI platform)
+## The parse
 
-- **Grouping by trade** replicates `groupByTrade()` from
-  `frontend/src/app/jobs/[jobNumber]/estimate-print/page.tsx`: items are bucketed
-  by `item.trade` (default `"Not Categorized"`), ordered by `TRADE_OPTIONS`, and
-  `rcv` / `depreciation` / `acv` are summed per trade.
-- **Non-Recoverable Depreciation** is derived, not stored:
-  `depreciationType === "non-recoverable" ? depreciation : 0` — the same rule used
-  in `estimates-tab.tsx`. It is a **subset** of the Depreciation column, so
-  `RCV − Depreciation = ACV` still holds per trade.
-- **Line-number sort** uses the natural sort from `estimate-print/page.tsx`.
+The extraction prompt and model (`claude-sonnet-4-6`) mirror the OI platform's
+claim analyzer (`backend/app/routers/estimates.py`), with an added per-line trade
+classification. Browser→Anthropic calls use the
+`anthropic-dangerous-direct-browser-access` header.
 
-## About the O&P and Taxes columns
-
-O&P and Taxes are **not** tracked per trade anywhere in the source data. The PDF
-parser explicitly ignores the per-line O&P/Tax columns, and RCV figures already
-include tax and O&P. These values exist only as estimate-wide totals
-(`metadata.total_op`, `metadata.total_tax`).
-
-So per-trade O&P/Taxes cells render `—` ("if applicable"), and the estimate-wide
-figures appear in the **Total** row. If the estimate has no O&P/Tax on it, the
-Total row shows `—` there too.
+> Security note: an API key in a browser app is exposed to anyone who can open the
+> page. This is fine for local/personal use. **Do not deploy this publicly with a
+> key embedded, and never commit your key.**
 
 ## Files
 
-- `index.html` — page shell and controls
-- `styles.css` — print-first document styling (letter size, page breaks)
-- `app.js` — grouping logic, input parsing, fetch, rendering, print
-- `sample-data.json` — example claim so you can see it immediately
+- `index.html` — toolbar, review/categorize table, printable document shell
+- `styles.css` — screen + print-first styling (letter size, page breaks)
+- `app.js` — Anthropic parse, trade grouping, review UI, summary rendering, print
+- `sample-data.json` — example claim so you can see the output with no API call

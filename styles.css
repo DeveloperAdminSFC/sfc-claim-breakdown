@@ -129,6 +129,70 @@ html, body {
 }
 .empty strong { color: var(--ink-soft); }
 
+/* ===================== REVIEW / CATEGORIZE (screen only) ===================== */
+.review {
+  max-width: 8.5in;
+  margin: 24px auto 0;
+  padding: 0 24px;
+}
+.review-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.review-eyebrow {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 4px;
+}
+.review-title { font-size: 15px; font-weight: 600; margin: 0; color: var(--ink); }
+.review-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.chk { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-soft); cursor: pointer; }
+.chk input { cursor: pointer; }
+
+.review-table-wrap {
+  background: var(--paper);
+  border: 1px solid var(--rule-strong);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.review-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.review-table thead th {
+  text-align: right;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  padding: 10px;
+  background: var(--wash);
+  border-bottom: 1.5px solid var(--rule-strong);
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+}
+.review-table thead th.left { text-align: left; }
+.review-table thead th.ctr { text-align: center; }
+.review-table tbody td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--rule);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  vertical-align: middle;
+}
+.review-table tbody td.left { text-align: left; }
+.review-table tbody td.ctr { text-align: center; }
+.review-table tbody td.num { font-family: var(--font-mono); font-size: 11px; color: var(--ink-soft); }
+.review-table tbody td.desc { max-width: 3.4in; }
+.review-table tbody tr:hover { background: var(--wash); }
+.trade-select { min-width: 150px; padding: 5px 8px; font-size: 12px; }
+
 /* ============================ DOCUMENT ============================ */
 .doc {
   max-width: 8.5in;
@@ -318,7 +382,7 @@ html, body {
 @media print {
   @page { size: letter; margin: 0.5in; }
   html, body { background: #fff; }
-  .toolbar, .empty { display: none !important; }
+  .toolbar, .empty, .review { display: none !important; }
   .doc { max-width: none; margin: 0; padding: 0; }
   .page {
     border: none;
