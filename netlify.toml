@@ -1,0 +1,17 @@
+# Netlify config — static site + one serverless function that hides the API key.
+# Deploy: connect this repo to Netlify (no build step), then set the environment
+# variable ANTHROPIC_API_KEY under Site settings → Environment variables.
+
+[build]
+  publish = "."
+  functions = "netlify/functions"
+
+# Pretty URL: the app POSTs to /api/parse; Netlify routes it to the function.
+[[redirects]]
+  from = "/api/parse"
+  to = "/.netlify/functions/parse"
+  status = 200
+
+# Give the AI parse room to finish (default is 10s; Anthropic call can take longer).
+[functions."parse"]
+  timeout = 60

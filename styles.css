@@ -155,6 +155,7 @@ html, body {
 .review-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .chk { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-soft); cursor: pointer; }
 .chk input { cursor: pointer; }
+.sel-count { font-size: 12px; color: var(--ink-faint); font-variant-numeric: tabular-nums; min-width: 74px; text-align: right; }
 
 .review-table-wrap {
   background: var(--paper);
@@ -189,9 +190,34 @@ html, body {
 .review-table tbody td.left { text-align: left; }
 .review-table tbody td.ctr { text-align: center; }
 .review-table tbody td.num { font-family: var(--font-mono); font-size: 11px; color: var(--ink-soft); }
-.review-table tbody td.desc { max-width: 3.4in; }
+.review-table tbody td.desc { max-width: 3.2in; }
 .review-table tbody tr:hover { background: var(--wash); }
 .trade-select { min-width: 150px; padding: 5px 8px; font-size: 12px; }
+
+/* Row-select checkbox column */
+.review-table th.sel-col, .review-table td.sel-col { width: 34px; padding-left: 12px; padding-right: 6px; }
+.review-table .row-chk, #selectAll { cursor: pointer; width: 15px; height: 15px; }
+
+/* Editable dollar-amount inputs */
+.review-table th.edit-col { text-align: right; }
+.review-table td.edit-col { padding: 5px 8px; }
+.review-table td.acv-cell { font-weight: 600; }
+.amt {
+  width: 96px;
+  font: inherit;
+  font-size: 12px;
+  text-align: right;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--rule-strong);
+  border-radius: 5px;
+  padding: 5px 7px;
+  font-variant-numeric: tabular-nums;
+}
+.amt:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(31,58,95,0.14); }
+/* Hide spinner buttons for a cleaner ledger look */
+.amt::-webkit-outer-spin-button, .amt::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.amt { -moz-appearance: textfield; }
 
 /* ============================ DOCUMENT ============================ */
 .doc {

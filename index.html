@@ -18,7 +18,7 @@
 
     <div class="toolbar-row toolbar-inputs">
       <label class="field field-grow">
-        <span class="field-label">Anthropic API key (kept in this browser only — never uploaded or committed)</span>
+        <span class="field-label">Anthropic API key — for local testing only. On the live site, leave this blank (the server holds the key).</span>
         <div class="field-inline">
           <input id="apiKey" class="input" type="password" autocomplete="off" spellcheck="false"
             placeholder="sk-ant-…" />
@@ -48,8 +48,9 @@
           <input type="checkbox" id="detailToggle" />
           <span>Include per-trade detail pages</span>
         </label>
-        <button id="bulkTradeBtn" class="btn">Set all to…</button>
+        <span class="sel-count" id="selCount">0 selected</span>
         <select id="bulkTradeSelect" class="input input-select"></select>
+        <button id="applySelectedBtn" class="btn">Apply to selected</button>
         <button id="buildBtn" class="btn btn-primary">Build summary ↓</button>
       </div>
     </div>
@@ -57,12 +58,13 @@
       <table class="review-table">
         <thead>
           <tr>
+            <th class="ctr sel-col"><input type="checkbox" id="selectAll" title="Select all rows" /></th>
             <th class="left">Line&nbsp;#</th>
             <th class="left">Description</th>
             <th class="left">Quantity</th>
-            <th>RCV</th>
-            <th>Depreciation</th>
-            <th class="ctr">Non-Rec.</th>
+            <th class="edit-col">RCV</th>
+            <th class="edit-col">Depreciation</th>
+            <th class="edit-col">Non-Rec. Dep.</th>
             <th>ACV</th>
             <th class="left">Trade</th>
           </tr>

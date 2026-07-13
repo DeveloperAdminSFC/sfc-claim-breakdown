@@ -55,8 +55,9 @@ const TRADE_COLORS = {
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_MODEL = "claude-sonnet-4-6"; // matches backend/app/routers/estimates.py
 
-// The extraction prompt. Reuses the OI backend's PARSE_PROMPT and adds a `trade`
-// classification + a richer summary (insurance, deductible) for the header.
+// The extraction prompt. Reuses the OI backend's PARSE_PROMPT, plus a richer summary
+// (insurance, deductible) for the header. Trade is NOT classified here — every line
+// starts "Not Categorized" and the user assigns trades in the review step.
 const PARSE_PROMPT = `Extract every line item from this insurance claim/estimate PDF and return JSON.
 
 The table has many columns. Typical column order from LEFT to RIGHT:
@@ -65,22 +66,8 @@ Description | Quantity | Unit Price | Per | Age/Life | Condition | Total O&P | T
 IMPORTANT:
 - "RC" is the Replacement Cost (same as RCV). This is the LARGE total cost for the line item.
 - The math rule is: RCV - Depreciation = ACV. Use this to verify you are reading the right columns.
-- Only extract per line item: Description, Quantity, RC/RCV, Depreciation, ACV, and a trade classification.
+- Only extract per line item: Description, Quantity, RC/RCV, Depreciation, ACV.
 - Per-line Total O&P and Total Taxes are NOT extracted per line — they belong in the summary section only.
-
-Classify each line item into exactly ONE "trade" from this list, based on the description:
-ROOF, GUTTERS, SIDING, WINDOWS, SOLAR, PAINT, FENCE, GARAGE, MISC, "Not Trade Related", "Not Categorized".
-- ROOF: shingles, felt, ridge, decking, flashing, drip edge, ice & water, roof vents, tear-off.
-- GUTTERS: gutters, downspouts, gutter guards.
-- SIDING: siding, house wrap, fascia, soffit, wrap.
-- WINDOWS: windows, screens, glazing, window wraps.
-- SOLAR: solar panels, PV, detach/reset solar.
-- PAINT: paint, primer, caulk (as a paint prep line).
-- FENCE: fencing, gates.
-- GARAGE: garage doors, openers.
-- MISC: general conditions, dumpster, permits, detach/reset (non-trade-specific), labor minimums.
-- "Not Trade Related": taxes, O&P lines, deductible lines, or administrative rows that are not physical work.
-- "Not Categorized": use ONLY if you genuinely cannot tell.
 
 Return ONLY valid JSON with this exact structure (no markdown, no explanation):
 {
@@ -92,8 +79,7 @@ Return ONLY valid JSON with this exact structure (no markdown, no explanation):
       "rcv": number (RC/RCV column. Use 0.0 if blank or marked 'REVISED'/'PER BID'),
       "depreciation": number (positive, e.g. 502.88. Use 0.0 if none),
       "depreciationType": "recoverable" if shown in parentheses like (123.45), "non-recoverable" if in angle brackets like <123.45>,
-      "acv": number (ACV column, positive. Use 0.0 if blank or marked 'REVISED'/'PER BID'),
-      "trade": one of the trade values listed above
+      "acv": number (ACV column, positive. Use 0.0 if blank or marked 'REVISED'/'PER BID')
     }
   ],
   "summary": {
@@ -161,14 +147,6 @@ function compareLineNumbers(a, b) {
   return ta.length - tb.length;
 }
 
-// Normalize a trade string coming back from the model to one of our known keys.
-function normalizeTrade(t) {
-  if (!t) return "Not Categorized";
-  const up = String(t).trim();
-  const hit = TRADE_ORDER.find((x) => x.toLowerCase() === up.toLowerCase());
-  return hit || "Not Categorized";
-}
-
 // ------------------------- Anthropic PDF parse --------------------------- //
 // Read a File into a base64 string without blowing the call stack on big PDFs.
 function fileToBase64(file) {
@@ -188,26 +166,20 @@ function fileToBase64(file) {
   });
 }
 
-async function parsePdf(file) {
-  if (!file) return;
-  if (file.type !== "application/pdf" && !/\.pdf$/i.test(file.name)) {
-    return setStatus("That isn't a PDF. Choose a .pdf claim/estimate.", "error");
-  }
-  const key = document.getElementById("apiKey").value.trim();
-  if (!key) return setStatus("Paste your Anthropic API key first.", "error");
-  if (file.size > 50_000_000) return setStatus("PDF is over 50MB — too large to parse in one pass.", "error");
+// Pull the JSON object out of Claude's text (strip code fences first).
+function extractParsed(text) {
+  const cleaned = String(text || "").trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
+  const match = cleaned.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error("The parser did not return JSON. Try again.");
+  return JSON.parse(match[0]);
+}
 
-  setStatus(`Reading “${file.name}”…`);
-  let pdf_b64;
-  try {
-    pdf_b64 = await fileToBase64(file);
-  } catch (e) {
-    return setStatus(e.message, "error");
-  }
-
-  setStatus(`Parsing “${file.name}” with Claude… this usually takes 10–40s.`);
-  document.getElementById("pdfBtn").disabled = true;
-  try {
+// Two ways to reach Claude, depending on deployment:
+//   • Local / testing: a key is in the field → call Anthropic directly from the browser.
+//   • Deployed: field is blank → POST to the Netlify function, which holds the secret key.
+// Both resolve to a parsed { items, summary } object.
+async function requestParse(pdf_b64, key) {
+  if (key) {
     const res = await fetch(ANTHROPIC_URL, {
       method: "POST",
       headers: {
@@ -228,52 +200,85 @@ async function parsePdf(file) {
         }],
       }),
     });
-
     const data = await res.json();
     if (!res.ok) {
-      const detail = data && data.error && data.error.message ? data.error.message : `${res.status} ${res.statusText}`;
-      throw new Error(`Anthropic API error: ${detail}`);
+      throw new Error("Anthropic API error: " + (data?.error?.message || `${res.status} ${res.statusText}`));
     }
     if (data.stop_reason === "max_tokens") {
       throw new Error("The estimate is too large to parse in one pass (output was truncated). Try splitting the PDF.");
     }
-
     const text = (data.content || []).map((b) => b.text || "").join("").trim();
-    if (!text) throw new Error("Claude returned an empty response. Try again.");
+    if (!text) throw new Error("The parser returned an empty response. Try again.");
+    return extractParsed(text);
+  }
 
-    // Strip code fences and pull out the JSON object.
-    const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
-    const match = cleaned.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error("Claude did not return JSON. Try again.");
-    const parsed = JSON.parse(match[0]);
+  // Proxy path — the function returns already-parsed { items, summary }.
+  const res = await fetch("/api/parse", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ pdf_b64 }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error || `Parser service error (${res.status}).`);
+  return data;
+}
 
-    const items = (parsed.items || []).map((it) => ({
-      number: it.number != null ? String(it.number) : "",
-      description: it.description || "",
-      quantity: it.quantity || "",
-      rcv: Number(it.rcv) || 0,
-      depreciation: Number(it.depreciation) || 0,
-      depreciationType: it.depreciationType === "non-recoverable" ? "non-recoverable" : "recoverable",
-      acv: Number(it.acv) || 0,
-      trade: normalizeTrade(it.trade),
-    }));
+async function parsePdf(file) {
+  if (!file) return;
+  if (file.type !== "application/pdf" && !/\.pdf$/i.test(file.name)) {
+    return setStatus("That isn't a PDF. Choose a .pdf claim/estimate.", "error");
+  }
+  const key = document.getElementById("apiKey").value.trim();
+  if (file.size > 50_000_000) return setStatus("PDF is over 50MB — too large to parse in one pass.", "error");
+  // Netlify functions cap request bodies near 6MB; base64 inflates ~1.33×.
+  if (!key && file.size > 4_000_000) {
+    return setStatus(
+      "This PDF is large for the hosted parser (>~4MB). Paste an API key to parse it directly, or split the PDF.",
+      "error"
+    );
+  }
+
+  setStatus(`Reading “${file.name}”…`);
+  let pdf_b64;
+  try {
+    pdf_b64 = await fileToBase64(file);
+  } catch (e) {
+    return setStatus(e.message, "error");
+  }
+
+  setStatus(`Parsing “${file.name}”… this usually takes 10–40s.`);
+  document.getElementById("pdfBtn").disabled = true;
+  try {
+    const parsed = await requestParse(pdf_b64, key);
+
+    const items = (parsed.items || []).map((it) => {
+      const depreciation = Number(it.depreciation) || 0;
+      return {
+        number: it.number != null ? String(it.number) : "",
+        description: it.description || "",
+        quantity: it.quantity || "",
+        rcv: Number(it.rcv) || 0,
+        depreciation,
+        // Seed non-recoverable from the notation Claude read; then it's freely editable.
+        nonRecoverableDep: it.depreciationType === "non-recoverable" ? depreciation : 0,
+        acv: (Number(it.rcv) || 0) - depreciation, // ACV is always RCV − Depreciation
+        trade: "Not Categorized", // every line starts uncategorized
+      };
+    });
     if (!items.length) throw new Error("No line items found in this PDF.");
 
     state = { items, summary: parsed.summary || {} };
-    localStorage.setItem("cb_anthropicKey", key);
+    if (key) localStorage.setItem("cb_anthropicKey", key);
 
     renderReview();
-    const guessed = items.filter((i) => i.trade !== "Not Categorized").length;
     setStatus(
       `Parsed ${items.length} line item${items.length === 1 ? "" : "s"}. ` +
-      `${guessed} pre-categorized — review the Trade column, then Build summary.`,
+      `All start “Not Categorized” — select lines and assign a trade, then Build summary.`,
       "ok"
     );
   } catch (err) {
-    // Anthropic browser CORS is enabled via the dangerous-direct-browser-access
-    // header; a "Failed to fetch" here is almost always a bad/absent key or no network.
     setStatus(
-      `${err.message}${/failed to fetch/i.test(err.message) ? " — check your network and that the API key is valid." : ""}`,
+      `${err.message}${/failed to fetch/i.test(err.message) ? " — check your network" + (key ? " and that the API key is valid." : " (or paste an API key to parse directly).") : ""}`,
       "error"
     );
   } finally {
@@ -289,49 +294,83 @@ function tradeSelectHTML(selected, idAttr) {
   return `<select class="input input-select trade-select" ${idAttr}>${opts}</select>`;
 }
 
+// A compact numeric input for an editable dollar amount.
+function moneyInput(cls, i, value) {
+  return `<input type="number" step="0.01" min="0" inputmode="decimal" class="amt ${cls}" data-i="${i}" value="${Number(value) || 0}" />`;
+}
+
+// Recompute a row's ACV cell live: ACV = RCV − Depreciation.
+function refreshAcvCell(i) {
+  const it = state.items[i];
+  it.acv = (Number(it.rcv) || 0) - (Number(it.depreciation) || 0);
+  const cell = document.querySelector(`.acv-cell[data-i="${i}"]`);
+  if (cell) cell.textContent = fmtUSD(it.acv);
+}
+
+function updateSelCount() {
+  const n = document.querySelectorAll("#reviewBody .row-chk:checked").length;
+  document.getElementById("selCount").textContent = `${n} selected`;
+}
+
 function renderReview() {
   const body = document.getElementById("reviewBody");
-  const rows = state.items
-    .map((it, i) => {
-      const nonRec = it.depreciationType === "non-recoverable";
-      return `
+  body.innerHTML = state.items
+    .map((it, i) => `
       <tr>
+        <td class="ctr sel-col"><input type="checkbox" class="row-chk" data-i="${i}" /></td>
         <td class="num">${esc(it.number)}</td>
         <td class="left desc">${esc(it.description)}</td>
         <td class="left">${esc(it.quantity)}</td>
-        <td>${fmtUSD(it.rcv)}</td>
-        <td>${fmtUSD(it.depreciation)}</td>
-        <td class="ctr">
-          <input type="checkbox" class="nonrec-chk" data-i="${i}" ${nonRec ? "checked" : ""}
-            title="Mark this line's depreciation as non-recoverable" />
-        </td>
-        <td>${fmtUSD(it.acv)}</td>
+        <td class="edit-col">${moneyInput("rcv-in", i, it.rcv)}</td>
+        <td class="edit-col">${moneyInput("dep-in", i, it.depreciation)}</td>
+        <td class="edit-col">${moneyInput("nonrec-in", i, it.nonRecoverableDep)}</td>
+        <td class="acv-cell" data-i="${i}">${fmtUSD(it.acv)}</td>
         <td class="left">${tradeSelectHTML(it.trade, `data-i="${i}"`)}</td>
-      </tr>`;
-    })
+      </tr>`)
     .join("");
-  body.innerHTML = rows;
 
-  // Wire per-row trade selects.
-  body.querySelectorAll(".trade-select").forEach((sel) => {
+  // Per-row trade selects.
+  body.querySelectorAll(".trade-select").forEach((sel) =>
     sel.addEventListener("change", (e) => {
-      const i = Number(e.target.getAttribute("data-i"));
-      state.items[i].trade = e.target.value;
-    });
-  });
-  // Wire per-row non-recoverable toggles.
-  body.querySelectorAll(".nonrec-chk").forEach((chk) => {
-    chk.addEventListener("change", (e) => {
-      const i = Number(e.target.getAttribute("data-i"));
-      state.items[i].depreciationType = e.target.checked ? "non-recoverable" : "recoverable";
-    });
-  });
+      state.items[Number(e.target.dataset.i)].trade = e.target.value;
+    })
+  );
 
-  // Populate the "Set all to…" bulk select once.
+  // Editable amounts. RCV / Depreciation drive ACV live; Non-Rec is independent.
+  body.querySelectorAll(".rcv-in").forEach((el) =>
+    el.addEventListener("input", (e) => {
+      const i = Number(e.target.dataset.i);
+      state.items[i].rcv = Number(e.target.value) || 0;
+      refreshAcvCell(i);
+    })
+  );
+  body.querySelectorAll(".dep-in").forEach((el) =>
+    el.addEventListener("input", (e) => {
+      const i = Number(e.target.dataset.i);
+      state.items[i].depreciation = Number(e.target.value) || 0;
+      refreshAcvCell(i);
+    })
+  );
+  body.querySelectorAll(".nonrec-in").forEach((el) =>
+    el.addEventListener("input", (e) => {
+      const i = Number(e.target.dataset.i);
+      state.items[i].nonRecoverableDep = Math.max(0, Number(e.target.value) || 0);
+    })
+  );
+
+  // Row selection.
+  body.querySelectorAll(".row-chk").forEach((chk) =>
+    chk.addEventListener("change", updateSelCount)
+  );
+  const selectAll = document.getElementById("selectAll");
+  selectAll.checked = false;
+
+  // Populate the trade select once.
   const bulk = document.getElementById("bulkTradeSelect");
   if (!bulk.options.length) {
     bulk.innerHTML = TRADE_ORDER.map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join("");
   }
+  updateSelCount();
 
   document.getElementById("review").hidden = false;
   document.getElementById("empty").style.display = "none";
@@ -354,11 +393,12 @@ function groupByTrade(items) {
     const its = byTrade.get(t);
     let rcv = 0, dep = 0, nonRecDep = 0, acv = 0;
     for (const it of its) {
+      const r = Number(it.rcv) || 0;
       const d = Number(it.depreciation) || 0;
-      rcv += Number(it.rcv) || 0;
+      rcv += r;
       dep += d;
-      acv += Number(it.acv) || 0;
-      if (it.depreciationType === "non-recoverable") nonRecDep += d;
+      acv += r - d; // ACV = RCV − Depreciation
+      nonRecDep += Number(it.nonRecoverableDep) || 0;
     }
     return {
       trade: t,
@@ -455,7 +495,8 @@ function renderDoc() {
       .map((g) => {
         const rows = g.items
           .map((it) => {
-            const nr = it.depreciationType === "non-recoverable" ? '<span class="nr-tag">NON-REC</span>' : "";
+            const nrAmt = Number(it.nonRecoverableDep) || 0;
+            const nr = nrAmt > 0 ? '<span class="nr-tag">NON-REC</span>' : "";
             return `
             <tr>
               <td class="num">${esc(it.number)}</td>
@@ -463,8 +504,8 @@ function renderDoc() {
               <td class="left">${esc(it.quantity)}</td>
               <td>${fmtUSD(it.rcv)}</td>
               <td>${fmtUSD(it.depreciation)}</td>
-              <td>${it.depreciationType === "non-recoverable" ? fmtUSD(it.depreciation) : dash}</td>
-              <td>${fmtUSD(it.acv)}</td>
+              <td>${nrAmt > 0 ? fmtUSD(nrAmt) : dash}</td>
+              <td>${fmtUSD((Number(it.rcv) || 0) - (Number(it.depreciation) || 0))}</td>
             </tr>`;
           })
           .join("");
@@ -528,12 +569,24 @@ function init() {
     renderDoc();
   });
 
-  // "Set all to…" bulk trade apply.
-  document.getElementById("bulkTradeBtn").addEventListener("click", () => {
+  // Apply the chosen trade to every checked row (printer-style multi-select).
+  document.getElementById("applySelectedBtn").addEventListener("click", () => {
     const t = document.getElementById("bulkTradeSelect").value;
-    state.items.forEach((it) => (it.trade = t));
-    renderReview();
-    setStatus(`Set all ${state.items.length} line items to ${t}.`, "ok");
+    const checked = [...document.querySelectorAll("#reviewBody .row-chk:checked")];
+    if (!checked.length) return setStatus("Select one or more rows first (checkboxes on the left).", "error");
+    checked.forEach((chk) => {
+      const i = Number(chk.dataset.i);
+      state.items[i].trade = t;
+      const sel = document.querySelector(`.trade-select[data-i="${i}"]`);
+      if (sel) sel.value = t;
+    });
+    setStatus(`Set ${checked.length} line item${checked.length === 1 ? "" : "s"} to ${t}.`, "ok");
+  });
+
+  // Select-all header checkbox toggles every row.
+  document.getElementById("selectAll").addEventListener("change", (e) => {
+    document.querySelectorAll("#reviewBody .row-chk").forEach((chk) => (chk.checked = e.target.checked));
+    updateSelCount();
   });
 
   document.getElementById("downloadBtn").addEventListener("click", () => window.print());
@@ -545,17 +598,24 @@ function init() {
       const res = await fetch("sample-data.json");
       const data = await res.json();
       const group = data.final || data.initial || data;
-      const items = (group.items || []).map((it) => ({
-        number: it.number != null ? String(it.number) : "",
-        description: it.description || "",
-        quantity: it.quantity || "",
-        rcv: Number(it.rcv) || 0,
-        depreciation: Number(it.depreciation) || 0,
-        depreciationType: it.depreciationType === "non-recoverable" ? "non-recoverable" : "recoverable",
-        acv: Number(it.acv) || 0,
-        trade: normalizeTrade(it.trade),
-      }));
+      const src = group.items || [];
+      const items = src.map((it) => {
+        const depreciation = Number(it.depreciation) || 0;
+        const rcv = Number(it.rcv) || 0;
+        return {
+          number: it.number != null ? String(it.number) : "",
+          description: it.description || "",
+          quantity: it.quantity || "",
+          rcv,
+          depreciation,
+          nonRecoverableDep: it.depreciationType === "non-recoverable" ? depreciation : 0,
+          acv: rcv - depreciation,
+          trade: "Not Categorized", // start uncategorized, like a real parse
+        };
+      });
       const m = group.metadata || {};
+      const sumOP = src.reduce((s, it) => s + (Number(it.op) || 0), 0);
+      const sumTax = src.reduce((s, it) => s + (Number(it.tax) || 0), 0);
       state = {
         items,
         summary: {
@@ -563,12 +623,12 @@ function init() {
           claim_number: m.claim_number,
           date_of_loss: m.claim_date || m.date_of_loss,
           deductible: m.deductible,
-          totalOP: m.total_op,
-          totalTax: m.total_tax,
+          totalOP: m.total_op != null ? m.total_op : (sumOP || null),
+          totalTax: m.total_tax != null ? m.total_tax : (sumTax || null),
         },
       };
       renderReview();
-      setStatus(`Loaded sample: ${items.length} line items. Review trades, then Build summary.`, "ok");
+      setStatus(`Loaded sample: ${items.length} line items. All start “Not Categorized” — select and assign trades, then Build summary.`, "ok");
     } catch {
       setStatus("Could not load sample-data.json (serve the folder over HTTP, not file://).", "error");
     }
