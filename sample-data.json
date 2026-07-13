@@ -1,0 +1,38 @@
+{
+  "final": {
+    "metadata": {
+      "insurance_company": "State Farm",
+      "claim_date": "2026-03-14",
+      "deductible": 2500.00
+    },
+    "items": [
+      { "id": "1",  "number": "1",  "description": "Remove & replace laminated comp shingles", "quantity": "28.40 SQ", "op": 1872.08, "tax": 0.00, "rcv": 12480.55, "depreciation": 3120.14, "depreciationType": "recoverable", "acv": 9360.41, "trade": "ROOF", "is_billable": true },
+      { "id": "2",  "number": "2",  "description": "Ridge cap - composition shingles", "quantity": "62.00 LF", "op": 72.93, "tax": 0.00, "rcv": 486.20, "depreciation": 121.55, "depreciationType": "recoverable", "acv": 364.65, "trade": "ROOF", "is_billable": true },
+      { "id": "3",  "number": "3",  "description": "Ice & water shield", "quantity": "210.00 SF", "op": 58.34, "tax": 22.10, "rcv": 388.90, "depreciation": 0.00, "depreciationType": "recoverable", "acv": 388.90, "trade": "ROOF", "is_billable": true },
+      { "id": "4",  "number": "4",  "description": "Drip edge", "quantity": "148.00 LF", "op": 48.40, "tax": 18.32, "rcv": 322.64, "depreciation": 80.66, "depreciationType": "recoverable", "acv": 241.98, "trade": "ROOF", "is_billable": true },
+      { "id": "5",  "number": "5",  "description": "Impact-resistant shingle upgrade (code)", "quantity": "28.40 SQ", "op": 213.00, "tax": 84.60, "rcv": 1420.00, "depreciation": 1420.00, "depreciationType": "non-recoverable", "acv": 0.00, "trade": "ROOF", "is_billable": true },
+      { "id": "6",  "number": "6",  "description": "5\" seamless aluminum gutter", "quantity": "132.00 LF", "op": 237.60, "tax": 62.30, "rcv": 1584.00, "depreciation": 475.20, "depreciationType": "recoverable", "acv": 1108.80, "trade": "GUTTERS", "is_billable": true },
+      { "id": "7",  "number": "7",  "description": "Downspout - aluminum", "quantity": "60.00 LF", "op": 81.00, "tax": 21.24, "rcv": 540.00, "depreciation": 162.00, "depreciationType": "recoverable", "acv": 378.00, "trade": "GUTTERS", "is_billable": true },
+      { "id": "8",  "number": "8",  "description": "Gutter guard", "quantity": "132.00 LF", "op": 138.60, "tax": 55.20, "rcv": 924.00, "depreciation": 924.00, "depreciationType": "non-recoverable", "acv": 0.00, "trade": "GUTTERS", "is_billable": false },
+      { "id": "9",  "number": "9",  "description": "R&R vinyl siding", "quantity": "410.00 SF", "op": 584.25, "tax": 152.80, "rcv": 3895.00, "depreciation": 1168.50, "depreciationType": "recoverable", "acv": 2726.50, "trade": "SIDING", "is_billable": true },
+      { "id": "10", "number": "10", "description": "House wrap (Tyvek)", "quantity": "410.00 SF", "op": 67.65, "tax": 25.60, "rcv": 451.00, "depreciation": 0.00, "depreciationType": "recoverable", "acv": 451.00, "trade": "SIDING", "is_billable": true },
+      { "id": "11", "number": "11", "description": "Detach & reset gutter for siding work", "quantity": "1.00 EA", "op": 31.50, "tax": 0.00, "rcv": 210.00, "depreciation": 62.50, "depreciationType": "non-recoverable", "acv": 147.50, "trade": "SIDING", "is_billable": true },
+      { "id": "12", "number": "12", "description": "R&R window screen", "quantity": "4.00 EA", "op": 51.00, "tax": 16.80, "rcv": 340.00, "depreciation": 102.00, "depreciationType": "recoverable", "acv": 238.00, "trade": "WINDOWS", "is_billable": true },
+      { "id": "13", "number": "13", "description": "General cleanup / dumpster", "quantity": "1.00 EA", "op": 97.50, "tax": 0.00, "rcv": 650.00, "depreciation": 0.00, "depreciationType": "recoverable", "acv": 650.00, "trade": "MISC", "is_billable": true }
+    ]
+  },
+  "initial": {
+    "metadata": {
+      "insurance_company": "State Farm",
+      "claim_date": "2026-03-14",
+      "deductible": 2500.00
+    },
+    "items": [
+      { "id": "i1", "number": "1", "description": "Remove & replace laminated comp shingles", "quantity": "28.40 SQ", "rcv": 12480.55, "depreciation": 3120.14, "depreciationType": "recoverable", "acv": 9360.41, "trade": "ROOF", "is_billable": true },
+      { "id": "i2", "number": "2", "description": "Ridge cap - composition shingles", "quantity": "62.00 LF", "rcv": 486.20, "depreciation": 121.55, "depreciationType": "recoverable", "acv": 364.65, "trade": "ROOF", "is_billable": true },
+      { "id": "i3", "number": "3", "description": "Drip edge", "quantity": "148.00 LF", "rcv": 322.64, "depreciation": 80.66, "depreciationType": "recoverable", "acv": 241.98, "trade": "ROOF", "is_billable": true },
+      { "id": "i4", "number": "4", "description": "5\" seamless aluminum gutter", "quantity": "132.00 LF", "rcv": 1584.00, "depreciation": 475.20, "depreciationType": "recoverable", "acv": 1108.80, "trade": "GUTTERS", "is_billable": true },
+      { "id": "i5", "number": "5", "description": "General cleanup / dumpster", "quantity": "1.00 EA", "rcv": 650.00, "depreciation": 0.00, "depreciationType": "recoverable", "acv": 650.00, "trade": "MISC", "is_billable": true }
+    ]
+  }
+}

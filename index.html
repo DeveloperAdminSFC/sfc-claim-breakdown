@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Claim Breakdown by Trade</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- ===================== CONTROL BAR (screen only) ===================== -->
+  <div class="toolbar" id="toolbar">
+    <div class="toolbar-row">
+      <h1 class="toolbar-title">Claim Breakdown</h1>
+      <div class="toolbar-actions">
+        <button id="printBtn" class="btn btn-primary" disabled>Print / Save PDF</button>
+      </div>
+    </div>
+
+    <div class="toolbar-row toolbar-inputs">
+      <label class="field">
+        <span class="field-label">Load by Job #</span>
+        <div class="field-inline">
+          <input id="jobNumber" class="input" type="text" inputmode="numeric" placeholder="e.g. 1234" />
+          <select id="estimateType" class="input input-select">
+            <option value="final">Final</option>
+            <option value="initial">Initial</option>
+          </select>
+          <button id="fetchBtn" class="btn">Load</button>
+        </div>
+      </label>
+
+      <label class="field">
+        <span class="field-label">API base URL</span>
+        <input id="apiBase" class="input" type="text" placeholder="https://your-backend.example.com" />
+      </label>
+    </div>
+
+    <div class="toolbar-row toolbar-inputs">
+      <label class="field field-grow">
+        <span class="field-label">…or paste estimate JSON / drop a .json file</span>
+        <textarea id="jsonInput" class="input textarea" rows="3"
+          placeholder='Paste the estimates response, a single { "items": [...], "metadata": {...} }, or a raw items array.'></textarea>
+      </label>
+      <div class="field field-buttons">
+        <input id="fileInput" type="file" accept=".json,application/json" hidden />
+        <button id="fileBtn" class="btn">Choose file…</button>
+        <button id="parseBtn" class="btn">Render pasted JSON</button>
+        <button id="sampleBtn" class="btn btn-ghost">Load sample</button>
+      </div>
+    </div>
+
+    <div id="status" class="status" role="status" aria-live="polite"></div>
+  </div>
+
+  <!-- ===================== PRINTABLE DOCUMENT ===================== -->
+  <main id="doc" class="doc" hidden>
+    <!-- Populated by app.js -->
+  </main>
+
+  <div id="empty" class="empty">
+    <p>Load a claim to see the breakdown. Use a Job&nbsp;# with your API, paste JSON, or click <strong>Load sample</strong>.</p>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

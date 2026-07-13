@@ -1,0 +1,341 @@
+:root {
+  /* Palette — ink on paper, restrained. Trade accents pulled from the OI app. */
+  --paper: #ffffff;
+  --wash: #f6f7f9;
+  --ink: #14181f;
+  --ink-soft: #4a5361;
+  --ink-faint: #8b94a3;
+  --rule: #e2e6ec;
+  --rule-strong: #c2c9d4;
+  --accent: #1f3a5f;
+  --pos: #0f7a52;
+  --neg: #b4232a;
+
+  /* Trade accent map — mirrors TRADE_BADGE colors in the OI platform. */
+  --t-roof: #3b82f6;
+  --t-gutters: #10b981;
+  --t-siding: #f59e0b;
+  --t-windows: #8b5cf6;
+  --t-solar: #06b6d4;
+  --t-paint: #f43f5e;
+  --t-fence: #f97316;
+  --t-garage: #6366f1;
+  --t-misc: #64748b;
+  --t-none: #cbd5e1;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: "SF Mono", ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--wash);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "tnum" 1, "cv01" 1;
+}
+
+/* ============================ TOOLBAR ============================ */
+.toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--paper);
+  border-bottom: 1px solid var(--rule-strong);
+  padding: 14px 20px 16px;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.02), 0 8px 24px -18px rgba(0,0,0,0.25);
+}
+.toolbar-row { display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap; }
+.toolbar-row + .toolbar-row { margin-top: 12px; }
+.toolbar-title {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin: 0;
+  color: var(--accent);
+}
+.toolbar-actions { margin-left: auto; }
+
+.field { display: flex; flex-direction: column; gap: 5px; }
+.field-grow { flex: 1 1 340px; }
+.field-buttons { flex-direction: row; align-items: flex-end; gap: 8px; }
+.field-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.field-inline { display: flex; gap: 8px; }
+
+.input {
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--rule-strong);
+  border-radius: 6px;
+  padding: 7px 10px;
+  min-width: 120px;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(31,58,95,0.12);
+}
+.input-select { min-width: 96px; }
+.textarea { min-width: 260px; resize: vertical; font-family: var(--font-mono); font-size: 12px; line-height: 1.5; }
+#apiBase { min-width: 260px; }
+#jobNumber { max-width: 120px; }
+
+.btn {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--rule-strong);
+  border-radius: 6px;
+  padding: 7px 14px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease, border-color 0.12s ease, transform 0.05s ease;
+}
+.btn:hover { background: var(--wash); border-color: var(--ink-faint); }
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn-primary:hover:not(:disabled) { background: #16304f; border-color: #16304f; }
+.btn-ghost { border-style: dashed; color: var(--ink-soft); }
+
+.status { margin-top: 10px; font-size: 12.5px; min-height: 18px; }
+.status.error { color: var(--neg); font-weight: 600; }
+.status.ok { color: var(--pos); }
+
+.empty {
+  max-width: 720px;
+  margin: 80px auto;
+  text-align: center;
+  color: var(--ink-faint);
+  font-size: 15px;
+  line-height: 1.6;
+  padding: 0 24px;
+}
+.empty strong { color: var(--ink-soft); }
+
+/* ============================ DOCUMENT ============================ */
+.doc {
+  max-width: 8.5in;
+  margin: 28px auto 80px;
+  padding: 0 24px;
+}
+
+.page {
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 0.6in 0.65in 0.7in;
+  margin-bottom: 24px;
+  box-shadow: 0 1px 2px rgba(20,24,31,0.04), 0 12px 30px -22px rgba(20,24,31,0.3);
+}
+
+/* Header block */
+.doc-head {
+  border-bottom: 2px solid var(--ink);
+  padding-bottom: 14px;
+  margin-bottom: 22px;
+}
+.doc-eyebrow {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 6px;
+}
+.doc-title {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0 0 3px;
+}
+.doc-sub { font-size: 13px; color: var(--ink-soft); margin: 0; }
+
+.meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 4px 32px;
+  margin: 16px 0 24px;
+}
+.meta-item { display: flex; justify-content: space-between; gap: 12px; font-size: 12.5px; padding: 4px 0; border-bottom: 1px solid var(--rule); }
+.meta-item .k { color: var(--ink-faint); font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; font-size: 10.5px; align-self: center; }
+.meta-item .v { color: var(--ink); text-align: right; }
+
+.section-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  margin: 0 0 10px;
+}
+
+/* ---- Summary table (page 1) ---- */
+.summary {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.summary thead th {
+  text-align: right;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  padding: 0 10px 8px;
+  border-bottom: 1.5px solid var(--rule-strong);
+  white-space: nowrap;
+}
+.summary thead th.left { text-align: left; }
+.summary tbody td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--rule);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.summary tbody td.left { text-align: left; }
+.summary tbody tr:hover { background: var(--wash); }
+
+.trade-cell { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
+.trade-swatch { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+.dash { color: var(--ink-faint); }
+
+.summary tfoot td {
+  padding: 11px 10px;
+  border-top: 2px solid var(--ink);
+  font-weight: 700;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.summary tfoot td.left { text-align: left; text-transform: uppercase; letter-spacing: 0.05em; font-size: 11px; }
+
+.footnote {
+  margin-top: 14px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--ink-faint);
+}
+.footnote strong { color: var(--ink-soft); font-weight: 600; }
+
+/* ---- Per-trade line item pages ---- */
+.trade-page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 2px solid var(--ink);
+  padding-bottom: 10px;
+  margin-bottom: 4px;
+}
+.trade-page-title { display: inline-flex; align-items: center; gap: 10px; }
+.trade-page-title .bar { width: 5px; height: 22px; border-radius: 2px; }
+.trade-page-title h2 { font-size: 18px; margin: 0; font-weight: 700; letter-spacing: -0.01em; }
+.trade-page-totals { display: flex; gap: 20px; }
+.tpt { text-align: right; }
+.tpt .k { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-faint); font-weight: 700; }
+.tpt .v { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.lines {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-top: 14px;
+}
+.lines thead th {
+  text-align: right;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  padding: 0 8px 7px;
+  border-bottom: 1.5px solid var(--rule-strong);
+  white-space: nowrap;
+}
+.lines thead th.left { text-align: left; }
+.lines tbody td {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--rule);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  vertical-align: top;
+}
+.lines tbody td.left { text-align: left; }
+.lines tbody td.num { font-family: var(--font-mono); font-size: 11px; color: var(--ink-soft); }
+.lines tbody td.desc { max-width: 3.2in; }
+.lines tbody tr:hover { background: var(--wash); }
+.lines tfoot td {
+  padding: 9px 8px;
+  border-top: 2px solid var(--ink);
+  font-weight: 700;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.lines tfoot td.left { text-align: left; text-transform: uppercase; letter-spacing: 0.04em; font-size: 10.5px; }
+
+.nb-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: #fef3c7;
+  color: #92600a;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  vertical-align: middle;
+}
+.nr-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: #f1f5f9;
+  color: #64748b;
+  font-size: 9px;
+  font-weight: 700;
+  vertical-align: middle;
+}
+
+/* ============================ PRINT ============================ */
+@media print {
+  @page { size: letter; margin: 0.5in; }
+  html, body { background: #fff; }
+  .toolbar, .empty { display: none !important; }
+  .doc { max-width: none; margin: 0; padding: 0; }
+  .page {
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 0 0 0.2in;
+    margin: 0;
+    page-break-after: always;
+  }
+  .page:last-child { page-break-after: auto; }
+  .lines tbody tr, .summary tbody tr { page-break-inside: avoid; }
+  .trade-page-head, .doc-head { page-break-after: avoid; }
+}
+
+@media (max-width: 640px) {
+  .meta-grid { grid-template-columns: 1fr; }
+  .trade-page-totals { flex-wrap: wrap; gap: 12px; }
+  .doc { padding: 0 12px; }
+  .page { padding: 20px 16px; }
+}
