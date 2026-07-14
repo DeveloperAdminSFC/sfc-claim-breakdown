@@ -55,6 +55,11 @@ const TRADE_COLORS = {
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_MODEL = "claude-sonnet-4-6"; // matches backend/app/routers/estimates.py
 
+// Production backend (Cloud Run) used when no local API key is entered. Its
+// /api/estimates/{job}/parse endpoint parses the PDF server-side (no timeout limit,
+// unlike Netlify Functions). Fill in the real URL before deploy.
+const BACKEND_URL = "<CLOUD_RUN_BACKEND_URL>"; // fill in before deploy
+
 // The extraction prompt. Reuses the OI backend's PARSE_PROMPT, plus a richer summary
 // (insurance, deductible) for the header. Trade is NOT classified here — every line
 // starts "Not Categorized" and the user assigns trades in the review step.
@@ -176,9 +181,10 @@ function extractParsed(text) {
 
 // Two ways to reach Claude, depending on deployment:
 //   • Local / testing: a key is in the field → call Anthropic directly from the browser.
-//   • Deployed: field is blank → POST to the Netlify function, which holds the secret key.
+//   • Deployed: field is blank → POST the PDF to the production Cloud Run backend's
+//     /api/estimates/{job}/parse endpoint, which holds the key and parses server-side.
 // Both resolve to a parsed { items, summary } object.
-async function requestParse(pdf_b64, key) {
+async function requestParse(pdf_b64, key, file) {
   if (key) {
     const res = await fetch(ANTHROPIC_URL, {
       method: "POST",
@@ -212,15 +218,18 @@ async function requestParse(pdf_b64, key) {
     return extractParsed(text);
   }
 
-  // Proxy path — the function returns already-parsed { items, summary }.
-  const res = await fetch("/api/parse", {
+  // Backend path — POST the raw PDF as multipart to the Cloud Run parse endpoint.
+  // Job number 0 is a harmless placeholder: parse_estimate reads/writes no job data
+  // (it has no BigQuery dependency), it only parses the PDF and returns JSON.
+  const form = new FormData();
+  form.append("file", file, file.name);
+  const res = await fetch(`${BACKEND_URL}/api/estimates/0/parse?estimate_type=initial`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ pdf_b64 }),
+    body: form, // no Content-Type header — the browser sets the multipart boundary
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data?.error || `Parser service error (${res.status}).`);
-  return data;
+  if (!res.ok) throw new Error(data?.detail || `Parser service error (${res.status}).`);
+  return data; // { items, summary, validation } — validation ignored
 }
 
 async function parsePdf(file) {
@@ -230,26 +239,23 @@ async function parsePdf(file) {
   }
   const key = document.getElementById("apiKey").value.trim();
   if (file.size > 50_000_000) return setStatus("PDF is over 50MB — too large to parse in one pass.", "error");
-  // Netlify functions cap request bodies near 6MB; base64 inflates ~1.33×.
-  if (!key && file.size > 4_000_000) {
-    return setStatus(
-      "This PDF is large for the hosted parser (>~4MB). Paste an API key to parse it directly, or split the PDF.",
-      "error"
-    );
-  }
 
-  setStatus(`Reading “${file.name}”…`);
-  let pdf_b64;
-  try {
-    pdf_b64 = await fileToBase64(file);
-  } catch (e) {
-    return setStatus(e.message, "error");
+  // Base64 is only needed for the local direct-to-Anthropic path; the backend path
+  // sends the raw File as multipart.
+  let pdf_b64 = null;
+  if (key) {
+    setStatus(`Reading “${file.name}”…`);
+    try {
+      pdf_b64 = await fileToBase64(file);
+    } catch (e) {
+      return setStatus(e.message, "error");
+    }
   }
 
   setStatus(`Parsing “${file.name}”… this usually takes 10–40s.`);
   document.getElementById("pdfBtn").disabled = true;
   try {
-    const parsed = await requestParse(pdf_b64, key);
+    const parsed = await requestParse(pdf_b64, key, file);
 
     const items = (parsed.items || []).map((it) => {
       const depreciation = Number(it.depreciation) || 0;

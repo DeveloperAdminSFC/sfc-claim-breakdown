@@ -18,7 +18,8 @@ python -m http.server 8080
 
 For local testing, paste your Anthropic API key (`sk-ant-…`) into the key field. It is
 stored only in your browser's localStorage; click **Forget** to clear it. On the deployed
-site you leave this blank — the server holds the key (see **Deploy** below).
+site you leave this blank — uploads go to the existing Cloud Run backend instead (see
+**Deploy** below).
 
 ## Use it
 
@@ -48,44 +49,37 @@ API call.
   show `—` and the estimate totals appear in the Total row.
 - Tick **Include per-trade detail pages** before building to append one page per trade.
 
-## Deploy (Netlify) — with the key hidden
+## Deploy (Netlify)
 
-The deployed site must not ship the API key to browsers. A serverless function holds it.
+This is a **pure static site with no secrets of its own** — nothing to hide, no build step,
+no serverless function. When the API-key field is blank, uploads are sent to the existing
+Cloud Run backend, which holds the Anthropic key and parses the PDF (`POST
+/api/estimates/{job}/parse`). Cloud Run has no request-timeout limit, so large PDF parses
+complete (Netlify Functions' ~10–26s cap was killing them).
 
-1. Connect this repo to Netlify. There is **no build step** (`netlify.toml` sets
-   `publish = "."` and the functions directory).
-2. In **Site settings → Environment variables**, add `ANTHROPIC_API_KEY` = your key.
-   That value is read only by `netlify/functions/parse.mjs` at runtime — never sent to the
-   browser, never in the repo.
-3. Visit the live site, **leave the API-key field blank**, and upload a PDF. The app POSTs
-   the PDF to `/api/parse`; the function calls Claude with the secret key and returns the
-   parsed line items.
-
-> The key belongs in the **Netlify** env var (the runtime secret). A GitHub Actions secret
-> is only needed if you deploy via CI; it is not required for the standard Netlify Git
-> integration.
-
-**Size caveat:** Netlify caps function request bodies near 6 MB and base64 inflates a PDF
-~1.33×, so the hosted parser rejects PDFs over ~4 MB (the app warns you). For a large PDF,
-paste a key to parse it directly, split the PDF, or move the proxy to Cloudflare Workers
-(same code shape, higher limit).
+1. Set `BACKEND_URL` at the top of `app.js` to the production Cloud Run backend URL.
+2. Connect this repo to Netlify. There is **no build step** (`netlify.toml` sets
+   `publish = "."`).
+3. On the Cloud Run backend, add this Netlify site's URL to the `CORS_ORIGINS` env var so the
+   browser is allowed to call it. **This is a manual Cloud Run config step, not part of this
+   repo.**
+4. Visit the live site, **leave the API-key field blank**, and upload a PDF.
 
 ## The parse
 
 The extraction prompt and model (`claude-sonnet-4-6`) mirror the OI platform's claim
 analyzer (`backend/app/routers/estimates.py`). Trade classification is intentionally left to
-the user. Local browser→Anthropic calls use the `anthropic-dangerous-direct-browser-access`
-header; the deployed path goes through the Netlify function instead.
+the user. Local calls (when a key is entered) go browser→Anthropic directly using the
+`anthropic-dangerous-direct-browser-access` header; the deployed path posts the PDF to the
+Cloud Run backend instead.
 
 > Security note: a browser-entered key is visible to anyone who can open the page — fine for
-> local use. **Never commit a key, and don't deploy with a key embedded in client code** —
-> that's exactly what the Netlify function avoids.
+> local use only. **Never commit a key.** The deployed site has no key of its own.
 
 ## Files
 
 - `index.html` — toolbar, review/categorize table, printable document shell
 - `styles.css` — screen + print-first styling (letter size, page breaks)
-- `app.js` — parse (direct or via proxy), trade grouping, editable review table, summary, print
-- `netlify/functions/parse.mjs` — serverless proxy that holds the API key
-- `netlify.toml` — Netlify config (no build, `/api/parse` route)
+- `app.js` — parse (direct or via Cloud Run backend), trade grouping, editable review table, summary, print
+- `netlify.toml` — Netlify config (static site, no build)
 - `sample-data.json` — example claim so you can see the output with no API call
