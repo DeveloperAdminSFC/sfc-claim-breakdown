@@ -35,15 +35,24 @@
 html, body {
   margin: 0;
   padding: 0;
+  height: 100%;
   background: var(--wash);
   color: var(--ink);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   font-feature-settings: "tnum" 1, "cv01" 1;
 }
+/* Full-height app shell: toolbar/heading take natural height, the review area
+   (and empty state) flex to fill the rest of the viewport. */
+body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 
 /* ============================ TOOLBAR ============================ */
 .toolbar {
+  flex: 0 0 auto;
   position: sticky;
   top: 0;
   z-index: 10;
@@ -122,12 +131,14 @@ html, body {
 .status.ok { color: var(--pos); }
 
 .empty {
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 20px;
-  min-height: 62vh;
+  width: 100%;
   max-width: 720px;
   margin: 0 auto;
   text-align: center;
@@ -152,11 +163,17 @@ html, body {
 
 /* ===================== REVIEW / CATEGORIZE (screen only) ===================== */
 .review {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
   max-width: 8.5in;
-  margin: 24px auto 0;
-  padding: 0 24px;
+  margin: 16px auto 0;
+  padding: 0 24px 16px;
 }
 .review-head {
+  flex: 0 0 auto;
   margin-bottom: 12px;
 }
 .review-eyebrow {
@@ -188,11 +205,12 @@ html, body {
 
 .review-table-wrap {
   --actions-h: 0px;
+  flex: 1 1 auto;
+  min-height: 0;
   background: var(--paper);
   border: 1px solid var(--rule-strong);
   border-radius: 6px;
   overflow: auto;
-  max-height: calc(100vh - 190px);
 }
 .review-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 .review-table thead th {

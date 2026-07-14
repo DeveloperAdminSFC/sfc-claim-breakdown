@@ -180,8 +180,10 @@ function refreshAcvCell(i) {
 }
 
 // Anchor row for shift-click range selection; reset each render.
-let lastCheckedIndex = null;
+let lastClickedIndex = null;
 
+// Recompute "N selected" and the header checkbox state from the live DOM (never
+// from a separately tracked count, which could drift).
 function updateSelCount() {
   const boxes = document.querySelectorAll("#reviewBody .row-chk");
   const n = document.querySelectorAll("#reviewBody .row-chk:checked").length;
@@ -243,18 +245,21 @@ function renderReview() {
     })
   );
 
-  // Row selection — plain click toggles one; shift-click fills the range from the
-  // last-clicked row (spreadsheet/email-client behavior).
-  lastCheckedIndex = null;
+  // Row selection — plain click toggles one; shift-click extends a range from the
+  // last-clicked row to this one, matching the clicked box's post-click state
+  // (spreadsheet / email-client behavior).
+  lastClickedIndex = null;
   const boxes = [...body.querySelectorAll(".row-chk")];
   boxes.forEach((chk) =>
     chk.addEventListener("click", (e) => {
-      const i = Number(e.target.dataset.i);
-      if (e.shiftKey && lastCheckedIndex !== null) {
-        const lo = Math.min(lastCheckedIndex, i), hi = Math.max(lastCheckedIndex, i);
-        for (let j = lo; j <= hi; j++) boxes[j].checked = true;
+      // The browser has already toggled this checkbox by the time click fires.
+      const i = Number(e.currentTarget.dataset.i);
+      if (e.shiftKey && lastClickedIndex !== null && lastClickedIndex !== i) {
+        const targetState = e.currentTarget.checked; // propagate this box's new state
+        const lo = Math.min(lastClickedIndex, i), hi = Math.max(lastClickedIndex, i);
+        for (let j = lo; j <= hi; j++) boxes[j].checked = targetState; // only the slice
       }
-      lastCheckedIndex = i;
+      lastClickedIndex = i;
       updateSelCount();
     })
   );
@@ -523,7 +528,7 @@ function init() {
   // Select-all header checkbox toggles every row.
   document.getElementById("selectAll").addEventListener("change", (e) => {
     document.querySelectorAll("#reviewBody .row-chk").forEach((chk) => (chk.checked = e.target.checked));
-    lastCheckedIndex = null;
+    lastClickedIndex = null;
     updateSelCount();
   });
 
