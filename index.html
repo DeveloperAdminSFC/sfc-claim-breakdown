@@ -11,24 +11,10 @@
   <div class="toolbar" id="toolbar">
     <div class="toolbar-row">
       <h1 class="toolbar-title">Claim Breakdown</h1>
-      <div class="toolbar-actions">
-        <button id="downloadBtn" class="btn btn-primary" disabled>Download summary (PDF)</button>
-      </div>
-    </div>
-
-    <div class="toolbar-row toolbar-inputs">
-      <label class="field field-grow">
-        <span class="field-label">Anthropic API key — for local testing only. On the live site, leave this blank (the server holds the key).</span>
-        <div class="field-inline">
-          <input id="apiKey" class="input" type="password" autocomplete="off" spellcheck="false"
-            placeholder="sk-ant-…" />
-          <button id="clearKeyBtn" class="btn" title="Forget the saved key">Forget</button>
-        </div>
-      </label>
-
-      <div class="field field-buttons">
+      <!-- Compact controls — hidden until a claim is loaded (empty state has the big button). -->
+      <div class="toolbar-actions" id="toolbarActions" hidden>
         <input id="pdfInput" type="file" accept=".pdf,application/pdf" hidden />
-        <button id="pdfBtn" class="btn btn-primary">Upload claim PDF</button>
+        <button id="pdfBtn" class="btn">Upload another claim</button>
         <button id="sampleBtn" class="btn btn-ghost">Load sample</button>
       </div>
     </div>
@@ -39,10 +25,10 @@
   <!-- ============= REVIEW / CATEGORIZE (screen only, not printed) ============= -->
   <section id="review" class="review" hidden>
     <div class="review-head">
-      <div>
-        <p class="review-eyebrow">Step 2 · Categorize by trade</p>
-        <h2 class="review-title">Assign each line item to a trade, then build the summary.</h2>
-      </div>
+      <p class="review-eyebrow">Step 2 · Categorize by trade</p>
+      <h2 class="review-title">Assign each line item to a trade, then build the summary.</h2>
+    </div>
+    <div class="review-table-wrap">
       <div class="review-actions">
         <label class="chk">
           <input type="checkbox" id="detailToggle" />
@@ -53,8 +39,6 @@
         <button id="applySelectedBtn" class="btn">Apply to selected</button>
         <button id="buildBtn" class="btn btn-primary">Build summary ↓</button>
       </div>
-    </div>
-    <div class="review-table-wrap">
       <table class="review-table">
         <thead>
           <tr>
@@ -74,15 +58,29 @@
     </div>
   </section>
 
-  <!-- ===================== PRINTABLE DOCUMENT ===================== -->
-  <main id="doc" class="doc" hidden>
-    <!-- Populated by app.js -->
-  </main>
-
+  <!-- ===================== EMPTY STATE (primary upload action) ===================== -->
   <div id="empty" class="empty">
-    <p>Paste your Anthropic API key, then click <strong>Upload claim PDF</strong> to parse a claim and
-    break it down by trade. Or click <strong>Load sample</strong> to see the output first. Nothing is
-    saved — everything stays in this browser session.</p>
+    <p class="empty-lead">Upload an insurance claim PDF to break it down by trade.<br />
+      Nothing is saved — everything stays in this browser session.</p>
+    <button id="emptyUploadBtn" class="btn btn-primary btn-upload-lg">Upload Claim PDF</button>
+    <button id="emptySampleBtn" class="btn btn-ghost btn-sample-sm">Load sample instead</button>
+  </div>
+
+  <!-- ===================== SUMMARY MODAL (holds the printable doc) ===================== -->
+  <div id="summaryModal" class="modal" hidden>
+    <div class="modal-backdrop" id="modalBackdrop"></div>
+    <div class="modal-panel" role="dialog" aria-modal="true" aria-label="Claim summary">
+      <header class="modal-bar">
+        <span class="modal-title">Claim Summary by Trade</span>
+        <div class="modal-bar-actions">
+          <button id="downloadModalBtn" class="btn btn-primary">Download summary (PDF)</button>
+          <button id="closeModalBtn" class="btn btn-icon" aria-label="Close summary">✕</button>
+        </div>
+      </header>
+      <div class="modal-body">
+        <main id="doc" class="doc"><!-- Populated by app.js --></main>
+      </div>
+    </div>
   </div>
 
   <script src="app.js"></script>

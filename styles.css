@@ -29,6 +29,9 @@
 
 * { box-sizing: border-box; }
 
+/* Make [hidden] win over display:flex/grid containers below. */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   padding: 0;
@@ -119,15 +122,33 @@ html, body {
 .status.ok { color: var(--pos); }
 
 .empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  min-height: 62vh;
   max-width: 720px;
-  margin: 80px auto;
+  margin: 0 auto;
   text-align: center;
   color: var(--ink-faint);
   font-size: 15px;
   line-height: 1.6;
-  padding: 0 24px;
+  padding: 24px;
 }
 .empty strong { color: var(--ink-soft); }
+.empty-lead { margin: 0; }
+
+/* Big primary upload button for the empty state */
+.btn-upload-lg {
+  font-size: 17px;
+  font-weight: 700;
+  padding: 16px 34px;
+  border-radius: 10px;
+  letter-spacing: 0.01em;
+  box-shadow: 0 10px 26px -12px rgba(31,58,95,0.55);
+}
+.btn-sample-sm { font-size: 12.5px; padding: 6px 12px; }
 
 /* ===================== REVIEW / CATEGORIZE (screen only) ===================== */
 .review {
@@ -136,11 +157,6 @@ html, body {
   padding: 0 24px;
 }
 .review-head {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
   margin-bottom: 12px;
 }
 .review-eyebrow {
@@ -151,17 +167,32 @@ html, body {
   color: var(--accent);
   margin: 0 0 4px;
 }
-.review-title { font-size: 15px; font-weight: 600; margin: 0; color: var(--ink); }
-.review-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.review-title { font-size: 15px; font-weight: 600; margin: 4px 0 0; color: var(--ink); }
+
+/* Action bar — frozen at the top of the scrollable review area. */
+.review-actions {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  background: var(--paper);
+  border-bottom: 1px solid var(--rule-strong);
+}
 .chk { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-soft); cursor: pointer; }
 .chk input { cursor: pointer; }
-.sel-count { font-size: 12px; color: var(--ink-faint); font-variant-numeric: tabular-nums; min-width: 74px; text-align: right; }
+.sel-count { font-size: 12px; color: var(--ink-faint); font-variant-numeric: tabular-nums; min-width: 74px; text-align: right; margin-left: auto; }
 
 .review-table-wrap {
+  --actions-h: 0px;
   background: var(--paper);
   border: 1px solid var(--rule-strong);
   border-radius: 6px;
-  overflow: hidden;
+  overflow: auto;
+  max-height: calc(100vh - 190px);
 }
 .review-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 .review-table thead th {
@@ -176,7 +207,8 @@ html, body {
   border-bottom: 1.5px solid var(--rule-strong);
   white-space: nowrap;
   position: sticky;
-  top: 0;
+  top: var(--actions-h);
+  z-index: 2;
 }
 .review-table thead th.left { text-align: left; }
 .review-table thead th.ctr { text-align: center; }
@@ -218,6 +250,43 @@ html, body {
 /* Hide spinner buttons for a cleaner ledger look */
 .amt::-webkit-outer-spin-button, .amt::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .amt { -moz-appearance: textfield; }
+
+/* ============================ SUMMARY MODAL ============================ */
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.modal-backdrop { position: absolute; inset: 0; background: rgba(15,20,28,0.55); }
+.modal-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(9in, 100%);
+  max-height: 92vh;
+  background: var(--wash);
+  border-radius: 10px;
+  box-shadow: 0 24px 70px -20px rgba(0,0,0,0.55);
+  overflow: hidden;
+}
+.modal-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--paper);
+  border-bottom: 1px solid var(--rule-strong);
+}
+.modal-title { font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent); }
+.modal-bar-actions { display: flex; align-items: center; gap: 8px; }
+.btn-icon { padding: 6px 11px; font-size: 15px; line-height: 1; }
+.modal-body { overflow: auto; padding: 20px; }
+.modal-body .doc { margin: 0 auto; }
 
 /* ============================ DOCUMENT ============================ */
 .doc {
@@ -408,7 +477,24 @@ html, body {
 @media print {
   @page { size: letter; margin: 0.5in; }
   html, body { background: #fff; }
-  .toolbar, .empty, .review { display: none !important; }
+  .toolbar, .empty, .review, .modal-backdrop, .modal-bar { display: none !important; }
+  /* Neutralize the modal overlay so the pages flow and paginate normally
+     instead of being clipped to the on-screen fixed panel. */
+  #summaryModal, .modal, .modal-panel, .modal-body {
+    position: static !important;
+    display: block !important;
+    overflow: visible !important;
+    max-height: none !important;
+    height: auto !important;
+    width: auto !important;
+    inset: auto !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+  }
+  .modal-body .doc { margin: 0; }
   .doc { max-width: none; margin: 0; padding: 0; }
   .page {
     border: none;

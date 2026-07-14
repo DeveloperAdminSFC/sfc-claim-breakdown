@@ -1,17 +1,16 @@
 /* =============================================================================
-   Claim Breakdown by Trade — standalone tool (no backend, no database)
+   Claim Breakdown by Trade — standalone tool
    -----------------------------------------------------------------------------
    Flow:
      1. Upload a claim PDF.
-     2. The browser calls the Anthropic API DIRECTLY (same prompt + model the OI
-        platform backend uses) to extract every line item + a trade guess.
+     2. The PDF is sent to the Cloud Run backend's /api/estimates/{job}/parse
+        endpoint, which extracts every line item.
      3. You review/correct the trade on each line.
      4. Build a one-page summary (O&P · Tax · RCV · Depreciation · Non-Recoverable
         Dep · ACV by trade) and Save as PDF.
 
-   Nothing is persisted server-side. The only thing stored is your Anthropic API
-   key, in this browser's localStorage, so you don't retype it. Everything else
-   lives in the page for the session and is gone on refresh.
+   Nothing is persisted. Parsed line items live in the page for the session and
+   are gone on refresh.
 
    Math conventions mirror the OI platform:
      • Non-recoverable dep = depreciationType === "non-recoverable" ? depreciation : 0
@@ -51,65 +50,10 @@ const TRADE_COLORS = {
   "Not Categorized": "#cbd5e1",
 };
 
-// --------------------------- Anthropic config ---------------------------- //
-const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
-const ANTHROPIC_MODEL = "claude-sonnet-4-6"; // matches backend/app/routers/estimates.py
-
-// Production backend (Cloud Run) used when no local API key is entered. Its
-// /api/estimates/{job}/parse endpoint parses the PDF server-side (no timeout limit,
-// unlike Netlify Functions). Fill in the real URL before deploy.
-const BACKEND_URL = "https://sfc-operational-intelligence-git-101019263046.us-central1.run.app"; // fill in before deploy
-
-// The extraction prompt. Reuses the OI backend's PARSE_PROMPT, plus a richer summary
-// (insurance, deductible) for the header. Trade is NOT classified here — every line
-// starts "Not Categorized" and the user assigns trades in the review step.
-const PARSE_PROMPT = `Extract every line item from this insurance claim/estimate PDF and return JSON.
-
-The table has many columns. Typical column order from LEFT to RIGHT:
-Description | Quantity | Unit Price | Per | Age/Life | Condition | Total O&P | Total Taxes | RC (Replacement Cost) | Depreciation | ACV (Actual Cash Value)
-
-IMPORTANT:
-- "RC" is the Replacement Cost (same as RCV). This is the LARGE total cost for the line item.
-- The math rule is: RCV - Depreciation = ACV. Use this to verify you are reading the right columns.
-- Only extract per line item: Description, Quantity, RC/RCV, Depreciation, ACV.
-- Per-line Total O&P and Total Taxes are NOT extracted per line — they belong in the summary section only.
-
-Return ONLY valid JSON with this exact structure (no markdown, no explanation):
-{
-  "items": [
-    {
-      "number": "line item number as string",
-      "description": "line item description",
-      "quantity": "quantity with unit (e.g. '12.47 SQ', '110.00 LF', '1.00 EA')",
-      "rcv": number (RC/RCV column. Use 0.0 if blank or marked 'REVISED'/'PER BID'),
-      "depreciation": number (positive, e.g. 502.88. Use 0.0 if none),
-      "depreciationType": "recoverable" if shown in parentheses like (123.45), "non-recoverable" if in angle brackets like <123.45>,
-      "acv": number (ACV column, positive. Use 0.0 if blank or marked 'REVISED'/'PER BID')
-    }
-  ],
-  "summary": {
-    "insurance_company": string or null,
-    "claim_number": string or null,
-    "date_of_loss": string or null,
-    "deductible": number or null,
-    "totalRCV": number or null,
-    "totalDepreciation": number or null,
-    "totalACV": number or null,
-    "totalOP": number or null (estimate-wide overhead & profit from the summary/totals section),
-    "totalTax": number or null (estimate-wide sales tax from the summary/totals section),
-    "totalRecoverableDepreciation": number or null
-  }
-}
-
-Rules:
-- Include EVERY line item, do not skip any.
-- Quantity must include the unit.
-- All numbers POSITIVE (rcv, depreciation, acv).
-- depreciation is 0.0 if none.
-- totalOP and totalTax come from the estimate's summary/totals section, NOT per line item.
-- For rcv, depreciation, acv on line items: ALWAYS return a number (0.0 if blank/unreadable). Never null.
-- For summary fields: null is acceptable if that figure is missing or unreadable.
-- VERIFY each line: rcv - depreciation ≈ acv. If it doesn't match, re-read the columns.`;
+// --------------------------- Backend config ------------------------------ //
+// Production backend (Cloud Run). Its /api/estimates/{job}/parse endpoint parses the
+// PDF server-side and returns { items, summary, validation }.
+const BACKEND_URL = "https://sfc-operational-intelligence-git-101019263046.us-central1.run.app";
 
 // ------------------------------- State ----------------------------------- //
 // The parsed line items for the current claim. Trade is editable in the review
@@ -152,75 +96,11 @@ function compareLineNumbers(a, b) {
   return ta.length - tb.length;
 }
 
-// ------------------------- Anthropic PDF parse --------------------------- //
-// Read a File into a base64 string without blowing the call stack on big PDFs.
-function fileToBase64(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Could not read the file."));
-    reader.onload = () => {
-      const bytes = new Uint8Array(reader.result);
-      let binary = "";
-      const CHUNK = 0x8000;
-      for (let i = 0; i < bytes.length; i += CHUNK) {
-        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
-      }
-      resolve(btoa(binary));
-    };
-    reader.readAsArrayBuffer(file);
-  });
-}
-
-// Pull the JSON object out of Claude's text (strip code fences first).
-function extractParsed(text) {
-  const cleaned = String(text || "").trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
-  const match = cleaned.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error("The parser did not return JSON. Try again.");
-  return JSON.parse(match[0]);
-}
-
-// Two ways to reach Claude, depending on deployment:
-//   • Local / testing: a key is in the field → call Anthropic directly from the browser.
-//   • Deployed: field is blank → POST the PDF to the production Cloud Run backend's
-//     /api/estimates/{job}/parse endpoint, which holds the key and parses server-side.
-// Both resolve to a parsed { items, summary } object.
-async function requestParse(pdf_b64, key, file) {
-  if (key) {
-    const res = await fetch(ANTHROPIC_URL, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": key,
-        "anthropic-version": "2023-06-01",
-        "anthropic-dangerous-direct-browser-access": "true",
-      },
-      body: JSON.stringify({
-        model: ANTHROPIC_MODEL,
-        max_tokens: 32000,
-        messages: [{
-          role: "user",
-          content: [
-            { type: "document", source: { type: "base64", media_type: "application/pdf", data: pdf_b64 } },
-            { type: "text", text: PARSE_PROMPT },
-          ],
-        }],
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error("Anthropic API error: " + (data?.error?.message || `${res.status} ${res.statusText}`));
-    }
-    if (data.stop_reason === "max_tokens") {
-      throw new Error("The estimate is too large to parse in one pass (output was truncated). Try splitting the PDF.");
-    }
-    const text = (data.content || []).map((b) => b.text || "").join("").trim();
-    if (!text) throw new Error("The parser returned an empty response. Try again.");
-    return extractParsed(text);
-  }
-
-  // Backend path — POST the raw PDF as multipart to the Cloud Run parse endpoint.
-  // Job number 0 is a harmless placeholder: parse_estimate reads/writes no job data
-  // (it has no BigQuery dependency), it only parses the PDF and returns JSON.
+// ------------------------------ PDF parse -------------------------------- //
+// POST the raw PDF as multipart to the Cloud Run parse endpoint. Job number 0 is a
+// harmless placeholder: parse_estimate reads/writes no job data (it has no BigQuery
+// dependency), it only parses the PDF and returns { items, summary, validation }.
+async function requestParse(file) {
   const form = new FormData();
   form.append("file", file, file.name);
   const res = await fetch(`${BACKEND_URL}/api/estimates/0/parse?estimate_type=initial`, {
@@ -237,25 +117,12 @@ async function parsePdf(file) {
   if (file.type !== "application/pdf" && !/\.pdf$/i.test(file.name)) {
     return setStatus("That isn't a PDF. Choose a .pdf claim/estimate.", "error");
   }
-  const key = document.getElementById("apiKey").value.trim();
   if (file.size > 50_000_000) return setStatus("PDF is over 50MB — too large to parse in one pass.", "error");
-
-  // Base64 is only needed for the local direct-to-Anthropic path; the backend path
-  // sends the raw File as multipart.
-  let pdf_b64 = null;
-  if (key) {
-    setStatus(`Reading “${file.name}”…`);
-    try {
-      pdf_b64 = await fileToBase64(file);
-    } catch (e) {
-      return setStatus(e.message, "error");
-    }
-  }
 
   setStatus(`Parsing “${file.name}”… this usually takes 10–40s.`);
   document.getElementById("pdfBtn").disabled = true;
   try {
-    const parsed = await requestParse(pdf_b64, key, file);
+    const parsed = await requestParse(file);
 
     const items = (parsed.items || []).map((it) => {
       const depreciation = Number(it.depreciation) || 0;
@@ -274,7 +141,6 @@ async function parsePdf(file) {
     if (!items.length) throw new Error("No line items found in this PDF.");
 
     state = { items, summary: parsed.summary || {} };
-    if (key) localStorage.setItem("cb_anthropicKey", key);
 
     renderReview();
     setStatus(
@@ -284,7 +150,7 @@ async function parsePdf(file) {
     );
   } catch (err) {
     setStatus(
-      `${err.message}${/failed to fetch/i.test(err.message) ? " — check your network" + (key ? " and that the API key is valid." : " (or paste an API key to parse directly).") : ""}`,
+      `${err.message}${/failed to fetch/i.test(err.message) ? " — check your network." : ""}`,
       "error"
     );
   } finally {
@@ -313,9 +179,22 @@ function refreshAcvCell(i) {
   if (cell) cell.textContent = fmtUSD(it.acv);
 }
 
+// Anchor row for shift-click range selection; reset each render.
+let lastCheckedIndex = null;
+
 function updateSelCount() {
+  const boxes = document.querySelectorAll("#reviewBody .row-chk");
   const n = document.querySelectorAll("#reviewBody .row-chk:checked").length;
   document.getElementById("selCount").textContent = `${n} selected`;
+  const selectAll = document.getElementById("selectAll");
+  selectAll.checked = boxes.length > 0 && n === boxes.length;
+  selectAll.indeterminate = n > 0 && n < boxes.length;
+}
+
+// Toggle the empty-state (big upload button) vs. loaded chrome (compact toolbar).
+function setLoadedChrome(loaded) {
+  document.getElementById("empty").hidden = loaded;
+  document.getElementById("toolbarActions").hidden = !loaded;
 }
 
 function renderReview() {
@@ -364,12 +243,21 @@ function renderReview() {
     })
   );
 
-  // Row selection.
-  body.querySelectorAll(".row-chk").forEach((chk) =>
-    chk.addEventListener("change", updateSelCount)
+  // Row selection — plain click toggles one; shift-click fills the range from the
+  // last-clicked row (spreadsheet/email-client behavior).
+  lastCheckedIndex = null;
+  const boxes = [...body.querySelectorAll(".row-chk")];
+  boxes.forEach((chk) =>
+    chk.addEventListener("click", (e) => {
+      const i = Number(e.target.dataset.i);
+      if (e.shiftKey && lastCheckedIndex !== null) {
+        const lo = Math.min(lastCheckedIndex, i), hi = Math.max(lastCheckedIndex, i);
+        for (let j = lo; j <= hi; j++) boxes[j].checked = true;
+      }
+      lastCheckedIndex = i;
+      updateSelCount();
+    })
   );
-  const selectAll = document.getElementById("selectAll");
-  selectAll.checked = false;
 
   // Populate the trade select once.
   const bulk = document.getElementById("bulkTradeSelect");
@@ -379,9 +267,11 @@ function renderReview() {
   updateSelCount();
 
   document.getElementById("review").hidden = false;
-  document.getElementById("empty").style.display = "none";
-  document.getElementById("doc").hidden = true;
-  document.getElementById("downloadBtn").disabled = true;
+  setLoadedChrome(true);
+  // Offset the sticky <thead> so it sits directly below the sticky actions bar.
+  const wrap = document.querySelector(".review-table-wrap");
+  const actions = wrap.querySelector(".review-actions");
+  wrap.style.setProperty("--actions-h", actions.offsetHeight + "px");
   document.getElementById("review").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -543,27 +433,68 @@ function renderDoc() {
 
   const docEl = document.getElementById("doc");
   docEl.innerHTML = page1 + detailPages;
-  docEl.hidden = false;
-  document.getElementById("empty").style.display = "none";
-  document.getElementById("downloadBtn").disabled = false;
   document.title = "Claim Breakdown by Trade";
-  docEl.scrollIntoView({ behavior: "smooth", block: "start" });
+
+  // Show the built pages in a modal overlay; the body scrolls if multi-page.
+  const modal = document.getElementById("summaryModal");
+  modal.hidden = false;
+  modal.querySelector(".modal-body").scrollTop = 0;
+}
+
+function closeSummaryModal() {
+  document.getElementById("summaryModal").hidden = true;
+}
+
+// Renders the bundled example so you can see the output with no API call.
+async function loadSample() {
+  setStatus("Loading sample…");
+  try {
+    const res = await fetch("sample-data.json");
+    const data = await res.json();
+    const group = data.final || data.initial || data;
+    const src = group.items || [];
+    const items = src.map((it) => {
+      const depreciation = Number(it.depreciation) || 0;
+      const rcv = Number(it.rcv) || 0;
+      return {
+        number: it.number != null ? String(it.number) : "",
+        description: it.description || "",
+        quantity: it.quantity || "",
+        rcv,
+        depreciation,
+        nonRecoverableDep: it.depreciationType === "non-recoverable" ? depreciation : 0,
+        acv: rcv - depreciation,
+        trade: "Not Categorized", // start uncategorized, like a real parse
+      };
+    });
+    const m = group.metadata || {};
+    const sumOP = src.reduce((s, it) => s + (Number(it.op) || 0), 0);
+    const sumTax = src.reduce((s, it) => s + (Number(it.tax) || 0), 0);
+    state = {
+      items,
+      summary: {
+        insurance_company: m.insurance_company,
+        claim_number: m.claim_number,
+        date_of_loss: m.claim_date || m.date_of_loss,
+        deductible: m.deductible,
+        totalOP: m.total_op != null ? m.total_op : (sumOP || null),
+        totalTax: m.total_tax != null ? m.total_tax : (sumTax || null),
+      },
+    };
+    renderReview();
+    setStatus(`Loaded sample: ${items.length} line items. All start “Not Categorized” — select and assign trades, then Build summary.`, "ok");
+  } catch {
+    setStatus("Could not load sample-data.json (serve the folder over HTTP, not file://).", "error");
+  }
 }
 
 // ------------------------------ Wiring ----------------------------------- //
 function init() {
-  const savedKey = localStorage.getItem("cb_anthropicKey");
-  if (savedKey) document.getElementById("apiKey").value = savedKey;
-
-  document.getElementById("clearKeyBtn").addEventListener("click", () => {
-    localStorage.removeItem("cb_anthropicKey");
-    document.getElementById("apiKey").value = "";
-    setStatus("Saved key forgotten.", "ok");
-  });
-
-  document.getElementById("pdfBtn").addEventListener("click", () =>
-    document.getElementById("pdfInput").click()
-  );
+  // Both upload affordances (big empty-state button + compact toolbar button) open
+  // the same hidden file picker.
+  const openPicker = () => document.getElementById("pdfInput").click();
+  document.getElementById("pdfBtn").addEventListener("click", openPicker);
+  document.getElementById("emptyUploadBtn").addEventListener("click", openPicker);
   document.getElementById("pdfInput").addEventListener("change", (e) => {
     const file = e.target.files[0];
     if (file) parsePdf(file);
@@ -592,60 +523,29 @@ function init() {
   // Select-all header checkbox toggles every row.
   document.getElementById("selectAll").addEventListener("change", (e) => {
     document.querySelectorAll("#reviewBody .row-chk").forEach((chk) => (chk.checked = e.target.checked));
+    lastCheckedIndex = null;
     updateSelCount();
   });
 
-  document.getElementById("downloadBtn").addEventListener("click", () => window.print());
-
-  // Sample — renders the bundled example so you can see the output with no API call.
-  document.getElementById("sampleBtn").addEventListener("click", async () => {
-    setStatus("Loading sample…");
-    try {
-      const res = await fetch("sample-data.json");
-      const data = await res.json();
-      const group = data.final || data.initial || data;
-      const src = group.items || [];
-      const items = src.map((it) => {
-        const depreciation = Number(it.depreciation) || 0;
-        const rcv = Number(it.rcv) || 0;
-        return {
-          number: it.number != null ? String(it.number) : "",
-          description: it.description || "",
-          quantity: it.quantity || "",
-          rcv,
-          depreciation,
-          nonRecoverableDep: it.depreciationType === "non-recoverable" ? depreciation : 0,
-          acv: rcv - depreciation,
-          trade: "Not Categorized", // start uncategorized, like a real parse
-        };
-      });
-      const m = group.metadata || {};
-      const sumOP = src.reduce((s, it) => s + (Number(it.op) || 0), 0);
-      const sumTax = src.reduce((s, it) => s + (Number(it.tax) || 0), 0);
-      state = {
-        items,
-        summary: {
-          insurance_company: m.insurance_company,
-          claim_number: m.claim_number,
-          date_of_loss: m.claim_date || m.date_of_loss,
-          deductible: m.deductible,
-          totalOP: m.total_op != null ? m.total_op : (sumOP || null),
-          totalTax: m.total_tax != null ? m.total_tax : (sumTax || null),
-        },
-      };
-      renderReview();
-      setStatus(`Loaded sample: ${items.length} line items. All start “Not Categorized” — select and assign trades, then Build summary.`, "ok");
-    } catch {
-      setStatus("Could not load sample-data.json (serve the folder over HTTP, not file://).", "error");
-    }
+  // Summary modal controls: download, and close via ✕ / backdrop / Escape.
+  document.getElementById("downloadModalBtn").addEventListener("click", () => window.print());
+  document.getElementById("closeModalBtn").addEventListener("click", closeSummaryModal);
+  document.getElementById("modalBackdrop").addEventListener("click", closeSummaryModal);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !document.getElementById("summaryModal").hidden) closeSummaryModal();
   });
 
-  // Drag & drop a PDF anywhere on the toolbar.
-  const tb = document.getElementById("toolbar");
-  ["dragover", "drop"].forEach((evt) => tb.addEventListener(evt, (e) => e.preventDefault()));
-  tb.addEventListener("drop", (e) => {
-    const file = e.dataTransfer.files[0];
-    if (file) parsePdf(file);
+  // Sample buttons (empty state + toolbar).
+  document.getElementById("sampleBtn").addEventListener("click", loadSample);
+  document.getElementById("emptySampleBtn").addEventListener("click", loadSample);
+
+  // Drag & drop a PDF onto the toolbar or the empty-state area.
+  [document.getElementById("toolbar"), document.getElementById("empty")].forEach((zone) => {
+    ["dragover", "drop"].forEach((evt) => zone.addEventListener(evt, (e) => e.preventDefault()));
+    zone.addEventListener("drop", (e) => {
+      const file = e.dataTransfer.files[0];
+      if (file) parsePdf(file);
+    });
   });
 }
 
