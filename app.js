@@ -57,9 +57,9 @@ const BACKEND_URL = "https://sfc-operational-intelligence-git-101019263046.us-ce
 
 // ------------------------------- State ----------------------------------- //
 // The parsed line items for the current claim. Trade is editable in the review
-// table before the summary is built. This is the only source of truth; it is
-// never sent anywhere except the one Anthropic parse call.
-let state = { items: [], summary: {} };
+// table before the summary is built. jobInfo is optional display-only metadata
+// (Job # + Client) linked via the job picker; it does not affect parsing.
+let state = { items: [], summary: {}, jobInfo: null };
 
 // ------------------------------ Helpers ---------------------------------- //
 const fmtUSD = (n) =>
@@ -73,6 +73,142 @@ function setStatus(msg, kind) {
   const el = document.getElementById("status");
   el.textContent = msg || "";
   el.className = "status" + (kind ? " " + kind : "");
+}
+
+// ---------------------- Job picker (Job # + name search) ----------------- //
+// Optional, display-only: links the claim to a JobNimbus job for the printed
+// "Job #" / "Client" rows. Both a typed job number and a picked name-search
+// result resolve through the same GET /api/jobs?search= endpoint and converge on
+// applyJob() → state.jobInfo, so downstream behavior is identical either way.
+
+function debounce(fn, ms) {
+  let t;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn(...args), ms);
+  };
+}
+
+// Read-only lookup against the deployed backend.
+async function fetchJobs(query, pageSize) {
+  const url = `${BACKEND_URL}/api/jobs?search=${encodeURIComponent(query)}&page_size=${pageSize}`;
+  const res = await fetch(url, { headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`Job lookup failed (${res.status}).`);
+  return res.json(); // { jobs, total_count, page, page_size }
+}
+
+// Commit a chosen job to shared state and reflect it in every job-picker instance.
+function applyJob(job) {
+  state.jobInfo = {
+    job_number: job.job_number,
+    contact_name: job.contact_name || job.job_name || null,
+    address: job.address || null,
+  };
+  syncJobUI();
+  closeAllJobDropdowns();
+  document.querySelectorAll(".jobpicker .jp-search").forEach((el) => (el.value = ""));
+  const who = state.jobInfo.contact_name || "—";
+  setStatus(`Linked to Job #${state.jobInfo.job_number} — ${who}.`, "ok");
+}
+
+// Keep the empty-state and toolbar pickers showing the same Job # and "✓ <name>".
+function syncJobUI() {
+  const j = state.jobInfo;
+  document.querySelectorAll(".jobpicker").forEach((root) => {
+    const num = root.querySelector(".jp-number");
+    const confirm = root.querySelector(".jp-confirm");
+    if (num) num.value = j && j.job_number != null ? String(j.job_number) : "";
+    if (confirm) confirm.textContent = j && j.contact_name ? `✓ ${j.contact_name}` : "";
+  });
+}
+
+function closeAllJobDropdowns() {
+  document.querySelectorAll(".jp-dropdown").forEach((dd) => {
+    dd.hidden = true;
+    dd.innerHTML = "";
+  });
+}
+
+// Render search results into a picker's dropdown. Stashes the jobs array on the
+// dropdown so a row click applies without re-fetching.
+function renderJobDropdown(root, jobs) {
+  const dd = root.querySelector(".jp-dropdown");
+  if (!jobs.length) {
+    dd.innerHTML = `<div class="jp-empty">No matches</div>`;
+    dd._jobs = [];
+    dd.hidden = false;
+    return;
+  }
+  dd._jobs = jobs;
+  dd.innerHTML = jobs
+    .map((j, i) => {
+      const primary = j.contact_name || j.job_name || `Job #${j.job_number}`;
+      const secondary = `Job #${j.job_number}${j.address ? " · " + j.address : ""}`;
+      return `<button type="button" class="jp-row" data-idx="${i}">
+        <span class="jp-primary">${esc(primary)}</span>
+        <span class="jp-secondary">${esc(secondary)}</span>
+      </button>`;
+    })
+    .join("");
+  dd.hidden = false;
+}
+
+// Monotonic counter so only the newest in-flight search applies (no flicker).
+let jobSearchSeq = 0;
+
+// Wire one picker widget (search autocomplete + direct number entry).
+function setupJobPicker(root) {
+  const searchEl = root.querySelector(".jp-search");
+  const numEl = root.querySelector(".jp-number");
+  const dd = root.querySelector(".jp-dropdown");
+
+  const runSearch = debounce(async (query) => {
+    const seq = ++jobSearchSeq;
+    let data;
+    try {
+      data = await fetchJobs(query, 8);
+    } catch (err) {
+      if (seq === jobSearchSeq) setStatus(err.message, "error");
+      return;
+    }
+    if (seq !== jobSearchSeq) return; // a newer keystroke superseded this response
+    renderJobDropdown(root, data.jobs || []);
+  }, 300);
+
+  searchEl.addEventListener("input", () => {
+    const q = searchEl.value.trim();
+    if (q.length < 2) {
+      jobSearchSeq++; // invalidate any in-flight request
+      dd.hidden = true;
+      dd.innerHTML = "";
+      return;
+    }
+    runSearch(q);
+  });
+
+  // Click a result row.
+  dd.addEventListener("click", (e) => {
+    const row = e.target.closest(".jp-row");
+    if (!row || !dd._jobs) return;
+    const job = dd._jobs[Number(row.dataset.idx)];
+    if (job) applyJob(job);
+  });
+
+  // Direct number entry: Enter resolves the number via the same endpoint.
+  numEl.addEventListener("keydown", async (e) => {
+    if (e.key !== "Enter") return;
+    const n = numEl.value.trim();
+    if (!/^\d+$/.test(n)) return setStatus("Enter a numeric Job #.", "error");
+    setStatus(`Looking up Job #${n}…`);
+    try {
+      const data = await fetchJobs(n, 1);
+      const job = (data.jobs || [])[0];
+      if (job) applyJob(job);
+      else setStatus(`No job #${n} found.`, "error");
+    } catch (err) {
+      setStatus(err.message, "error");
+    }
+  });
 }
 
 // Natural sort for line numbers ("1", "1a", "21b") — from estimate-print/page.tsx
@@ -281,6 +417,7 @@ function renderReview() {
 
   document.getElementById("review").hidden = false;
   setLoadedChrome(true);
+  syncJobUI(); // reflect any job set in the empty state into the toolbar picker
   // Offset the sticky <thead> so it sits directly below the sticky actions bar.
   const wrap = document.querySelector(".review-table-wrap");
   const actions = wrap.querySelector(".review-actions");
@@ -331,7 +468,10 @@ function renderDoc() {
   const totalOP = md.totalOP != null ? Number(md.totalOP) : null;
   const totalTax = md.totalTax != null ? Number(md.totalTax) : null;
 
+  const job = state.jobInfo;
   const metaRows = [
+    ["Job #", job && job.job_number != null ? String(job.job_number) : "—"],
+    ["Client", (job && job.contact_name) || "—"],
     ["Insurance", md.insurance_company || "—"],
     ["Claim #", md.claim_number || "—"],
     ["Date of Loss", md.date_of_loss || "—"],
@@ -503,6 +643,13 @@ async function loadSample() {
 
 // ------------------------------ Wiring ----------------------------------- //
 function init() {
+  // Job pickers (empty-state + toolbar). Both share state.jobInfo via applyJob().
+  document.querySelectorAll(".jobpicker").forEach(setupJobPicker);
+  // Close any open results dropdown when clicking outside a picker.
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest(".jobpicker")) closeAllJobDropdowns();
+  });
+
   // Both upload affordances (big empty-state button + compact toolbar button) open
   // the same hidden file picker.
   const openPicker = () => document.getElementById("pdfInput").click();
@@ -569,7 +716,9 @@ function init() {
   document.getElementById("closeModalBtn").addEventListener("click", closeSummaryModal);
   document.getElementById("modalBackdrop").addEventListener("click", closeSummaryModal);
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !document.getElementById("summaryModal").hidden) closeSummaryModal();
+    if (e.key !== "Escape") return;
+    closeAllJobDropdowns();
+    if (!document.getElementById("summaryModal").hidden) closeSummaryModal();
   });
 
   // Sample buttons (empty state + toolbar).
