@@ -75,11 +75,11 @@ function setStatus(msg, kind) {
   el.className = "status" + (kind ? " " + kind : "");
 }
 
-// ---------------------- Job picker (Job # + name search) ----------------- //
+// ---------------------- Job picker (Job # lookup) ------------------------ //
 // Optional, display-only: links the claim to a JobNimbus job for the printed
-// "Job #" / "Client" rows. Both a typed job number and a picked name-search
-// result resolve through the same GET /api/jobs?search= endpoint and converge on
-// applyJob() → state.jobInfo, so downstream behavior is identical either way.
+// "Job #" / "Client" rows. Typing a job number resolves it via
+// GET /api/jobs/{job_number} → state.jobInfo; the inline "✓ <name>" is the only
+// feedback. This does not affect PDF parsing.
 
 function debounce(fn, ms) {
   let t;
@@ -89,15 +89,26 @@ function debounce(fn, ms) {
   };
 }
 
-// Read-only lookup against the deployed backend.
-async function fetchJobs(query, pageSize) {
-  const url = `${BACKEND_URL}/api/jobs?search=${encodeURIComponent(query)}&page_size=${pageSize}`;
-  const res = await fetch(url, { headers: { Accept: "application/json" } });
+// Look up a single job by number. Returns the job detail, null on 404, throws on
+// other errors.
+async function fetchJob(jobNumber) {
+  const res = await fetch(`${BACKEND_URL}/api/jobs/${encodeURIComponent(jobNumber)}`, {
+    headers: { Accept: "application/json" },
+  });
+  if (res.status === 404) return null;
   if (!res.ok) throw new Error(`Job lookup failed (${res.status}).`);
-  return res.json(); // { jobs, total_count, page, page_size }
+  return res.json(); // JobDetailResponse: { job_number, contact_name, address, ... }
 }
 
-// Commit a chosen job to shared state and reflect it in every job-picker instance.
+// Write the confirmation text (green ✓ on success, muted otherwise) to every picker.
+function setJobConfirm(text, kind) {
+  document.querySelectorAll(".jobpicker .jp-confirm").forEach((el) => {
+    el.textContent = text || "";
+    el.className = "jp-confirm" + (kind ? " " + kind : "");
+  });
+}
+
+// Commit a resolved job to shared state and reflect it in every picker instance.
 function applyJob(job) {
   state.jobInfo = {
     job_number: job.job_number,
@@ -105,109 +116,60 @@ function applyJob(job) {
     address: job.address || null,
   };
   syncJobUI();
-  closeAllJobDropdowns();
-  document.querySelectorAll(".jobpicker .jp-search").forEach((el) => (el.value = ""));
-  const who = state.jobInfo.contact_name || "—";
-  setStatus(`Linked to Job #${state.jobInfo.job_number} — ${who}.`, "ok");
 }
 
-// Keep the empty-state and toolbar pickers showing the same Job # and "✓ <name>".
+// Reflect the current jobInfo into all pickers (both empty-state and toolbar stay
+// in sync). Success shows a green "✓ <name>".
 function syncJobUI() {
   const j = state.jobInfo;
-  document.querySelectorAll(".jobpicker").forEach((root) => {
-    const num = root.querySelector(".jp-number");
-    const confirm = root.querySelector(".jp-confirm");
-    if (num) num.value = j && j.job_number != null ? String(j.job_number) : "";
-    if (confirm) confirm.textContent = j && j.contact_name ? `✓ ${j.contact_name}` : "";
-  });
+  if (j) {
+    document.querySelectorAll(".jobpicker .jp-number").forEach((el) => (el.value = String(j.job_number)));
+    setJobConfirm(j.contact_name ? `✓ ${j.contact_name}` : "✓ Linked", "ok");
+  } else {
+    setJobConfirm("", "");
+  }
 }
 
-function closeAllJobDropdowns() {
-  document.querySelectorAll(".jp-dropdown").forEach((dd) => {
-    dd.hidden = true;
-    dd.innerHTML = "";
-  });
+// Clear the link and show a muted message (e.g. "Job not found"); leaves the
+// number the user typed in place.
+function clearJob(message) {
+  state.jobInfo = null;
+  setJobConfirm(message || "", "muted");
 }
 
-// Render search results into a picker's dropdown. Stashes the jobs array on the
-// dropdown so a row click applies without re-fetching.
-function renderJobDropdown(root, jobs) {
-  const dd = root.querySelector(".jp-dropdown");
-  if (!jobs.length) {
-    dd.innerHTML = `<div class="jp-empty">No matches</div>`;
-    dd._jobs = [];
-    dd.hidden = false;
+// Monotonic counter so only the newest in-flight lookup applies.
+let jobLookupSeq = 0;
+
+async function lookupJob(n) {
+  const seq = ++jobLookupSeq;
+  let job;
+  try {
+    job = await fetchJob(n);
+  } catch {
+    if (seq === jobLookupSeq) clearJob("Lookup failed");
     return;
   }
-  dd._jobs = jobs;
-  dd.innerHTML = jobs
-    .map((j, i) => {
-      const primary = j.contact_name || j.job_name || `Job #${j.job_number}`;
-      const secondary = `Job #${j.job_number}${j.address ? " · " + j.address : ""}`;
-      return `<button type="button" class="jp-row" data-idx="${i}">
-        <span class="jp-primary">${esc(primary)}</span>
-        <span class="jp-secondary">${esc(secondary)}</span>
-      </button>`;
-    })
-    .join("");
-  dd.hidden = false;
+  if (seq !== jobLookupSeq) return; // superseded by a newer entry
+  if (job) applyJob(job);
+  else clearJob("Job not found");
 }
 
-// Monotonic counter so only the newest in-flight search applies (no flicker).
-let jobSearchSeq = 0;
-
-// Wire one picker widget (search autocomplete + direct number entry).
+// Wire one Job # input (debounced while typing, plus immediate on blur).
 function setupJobPicker(root) {
-  const searchEl = root.querySelector(".jp-search");
   const numEl = root.querySelector(".jp-number");
-  const dd = root.querySelector(".jp-dropdown");
+  if (!numEl) return;
+  const runLookup = debounce((v) => lookupJob(v), 400);
 
-  const runSearch = debounce(async (query) => {
-    const seq = ++jobSearchSeq;
-    let data;
-    try {
-      data = await fetchJobs(query, 8);
-    } catch (err) {
-      if (seq === jobSearchSeq) setStatus(err.message, "error");
-      return;
-    }
-    if (seq !== jobSearchSeq) return; // a newer keystroke superseded this response
-    renderJobDropdown(root, data.jobs || []);
-  }, 300);
-
-  searchEl.addEventListener("input", () => {
-    const q = searchEl.value.trim();
-    if (q.length < 2) {
-      jobSearchSeq++; // invalidate any in-flight request
-      dd.hidden = true;
-      dd.innerHTML = "";
-      return;
-    }
-    runSearch(q);
-  });
-
-  // Click a result row.
-  dd.addEventListener("click", (e) => {
-    const row = e.target.closest(".jp-row");
-    if (!row || !dd._jobs) return;
-    const job = dd._jobs[Number(row.dataset.idx)];
-    if (job) applyJob(job);
-  });
-
-  // Direct number entry: Enter resolves the number via the same endpoint.
-  numEl.addEventListener("keydown", async (e) => {
-    if (e.key !== "Enter") return;
+  numEl.addEventListener("input", () => {
     const n = numEl.value.trim();
-    if (!/^\d+$/.test(n)) return setStatus("Enter a numeric Job #.", "error");
-    setStatus(`Looking up Job #${n}…`);
-    try {
-      const data = await fetchJobs(n, 1);
-      const job = (data.jobs || [])[0];
-      if (job) applyJob(job);
-      else setStatus(`No job #${n} found.`, "error");
-    } catch (err) {
-      setStatus(err.message, "error");
-    }
+    jobLookupSeq++; // invalidate any in-flight lookup
+    if (!n) return clearJob("");
+    if (!/^\d+$/.test(n)) return clearJob("Numbers only");
+    runLookup(n);
+  });
+  numEl.addEventListener("blur", () => {
+    const n = numEl.value.trim();
+    if (/^\d+$/.test(n)) lookupJob(n); // resolve immediately on blur
   });
 }
 
@@ -643,12 +605,8 @@ async function loadSample() {
 
 // ------------------------------ Wiring ----------------------------------- //
 function init() {
-  // Job pickers (empty-state + toolbar). Both share state.jobInfo via applyJob().
+  // Job # pickers (empty-state + toolbar). Both share state.jobInfo.
   document.querySelectorAll(".jobpicker").forEach(setupJobPicker);
-  // Close any open results dropdown when clicking outside a picker.
-  document.addEventListener("click", (e) => {
-    if (!e.target.closest(".jobpicker")) closeAllJobDropdowns();
-  });
 
   // Both upload affordances (big empty-state button + compact toolbar button) open
   // the same hidden file picker.
@@ -716,9 +674,7 @@ function init() {
   document.getElementById("closeModalBtn").addEventListener("click", closeSummaryModal);
   document.getElementById("modalBackdrop").addEventListener("click", closeSummaryModal);
   document.addEventListener("keydown", (e) => {
-    if (e.key !== "Escape") return;
-    closeAllJobDropdowns();
-    if (!document.getElementById("summaryModal").hidden) closeSummaryModal();
+    if (e.key === "Escape" && !document.getElementById("summaryModal").hidden) closeSummaryModal();
   });
 
   // Sample buttons (empty state + toolbar).
