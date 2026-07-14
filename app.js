@@ -213,11 +213,11 @@ async function requestParse(file) {
 async function parsePdf(file) {
   if (!file) return;
   if (file.type !== "application/pdf" && !/\.pdf$/i.test(file.name)) {
-    return setStatus("That isn't a PDF. Choose a .pdf claim/estimate.", "error");
+    return showEmptyError("That isn't a PDF. Choose a .pdf claim/estimate.");
   }
-  if (file.size > 50_000_000) return setStatus("PDF is over 50MB — too large to parse in one pass.", "error");
+  if (file.size > 50_000_000) return showEmptyError("PDF is over 50MB — too large to parse in one pass.");
 
-  setStatus(`Parsing “${file.name}”… this usually takes 10–40s.`);
+  showParsing(); // centered spinner; top-left status stays clean
   document.getElementById("pdfBtn").disabled = true;
   try {
     const parsed = await requestParse(file);
@@ -238,7 +238,10 @@ async function parsePdf(file) {
     });
     if (!items.length) throw new Error("No line items found in this PDF.");
 
-    state = { items, summary: parsed.summary || {} };
+    // Mutate in place — do NOT reassign `state`, which would drop state.jobInfo
+    // (the linked Job #) and blank the summary's Job #/Client rows.
+    state.items = items;
+    state.summary = parsed.summary || {};
 
     renderReview();
     setStatus(
@@ -247,10 +250,8 @@ async function parsePdf(file) {
       "ok"
     );
   } catch (err) {
-    setStatus(
-      `${err.message}${/failed to fetch/i.test(err.message) ? " — check your network." : ""}`,
-      "error"
-    );
+    // Return to the centered empty state with the error shown there (not top-left).
+    showEmptyError(`${err.message}${/failed to fetch/i.test(err.message) ? " — check your network." : ""}`);
   } finally {
     document.getElementById("pdfBtn").disabled = false;
   }
@@ -292,6 +293,48 @@ function updateSelCount() {
 function setLoadedChrome(loaded) {
   document.getElementById("empty").hidden = loaded;
   document.getElementById("toolbarActions").hidden = !loaded;
+}
+
+// Centered parse progress (replaces the empty-state content while a parse runs).
+function showParsing() {
+  clearEmptyError();
+  setStatus(""); // keep the top-left clean during parse
+  document.getElementById("empty").hidden = true;
+  document.getElementById("parsing").hidden = false;
+}
+function hideParsing() {
+  document.getElementById("parsing").hidden = true;
+}
+
+// Parse/validation errors render centered in the empty state, not the top-left.
+function showEmptyError(msg) {
+  hideParsing();
+  document.getElementById("empty").hidden = false;
+  const el = document.getElementById("emptyError");
+  el.textContent = msg || "";
+  el.hidden = !msg;
+}
+function clearEmptyError() {
+  const el = document.getElementById("emptyError");
+  el.textContent = "";
+  el.hidden = true;
+}
+
+// "Upload another claim" — fully reset to the home/empty state. The linked Job #
+// (state.jobInfo) is PRESERVED on purpose: re-uploading a corrected claim for the
+// same job is the common case. Only a manual field-clear removes it.
+function resetToEmpty() {
+  state.items = [];
+  state.summary = {};
+  // state.jobInfo intentionally left untouched.
+  closeSummaryModal();
+  document.getElementById("review").hidden = true;
+  document.getElementById("doc").innerHTML = "";
+  hideParsing();
+  clearEmptyError();
+  setStatus("");
+  setLoadedChrome(false);   // show empty state, hide toolbar actions
+  syncJobUI();              // repaint preserved Job # + "✓ <name>" in the empty picker
 }
 
 // Parse a line-number range string ("1-5, 7, 9, 21b") into a Set of line-number
@@ -378,6 +421,7 @@ function renderReview() {
   updateSelCount();
 
   document.getElementById("review").hidden = false;
+  hideParsing();
   setLoadedChrome(true);
   syncJobUI(); // reflect any job set in the empty state into the toolbar picker
   // Offset the sticky <thead> so it sits directly below the sticky actions bar.
@@ -585,16 +629,15 @@ async function loadSample() {
     const m = group.metadata || {};
     const sumOP = src.reduce((s, it) => s + (Number(it.op) || 0), 0);
     const sumTax = src.reduce((s, it) => s + (Number(it.tax) || 0), 0);
-    state = {
-      items,
-      summary: {
-        insurance_company: m.insurance_company,
-        claim_number: m.claim_number,
-        date_of_loss: m.claim_date || m.date_of_loss,
-        deductible: m.deductible,
-        totalOP: m.total_op != null ? m.total_op : (sumOP || null),
-        totalTax: m.total_tax != null ? m.total_tax : (sumTax || null),
-      },
+    // Mutate in place so state.jobInfo (linked Job #) is preserved.
+    state.items = items;
+    state.summary = {
+      insurance_company: m.insurance_company,
+      claim_number: m.claim_number,
+      date_of_loss: m.claim_date || m.date_of_loss,
+      deductible: m.deductible,
+      totalOP: m.total_op != null ? m.total_op : (sumOP || null),
+      totalTax: m.total_tax != null ? m.total_tax : (sumTax || null),
     };
     renderReview();
     setStatus(`Loaded sample: ${items.length} line items. All start “Not Categorized” — select and assign trades, then Build summary.`, "ok");
@@ -608,11 +651,11 @@ function init() {
   // Job # pickers (empty-state + toolbar). Both share state.jobInfo.
   document.querySelectorAll(".jobpicker").forEach(setupJobPicker);
 
-  // Both upload affordances (big empty-state button + compact toolbar button) open
-  // the same hidden file picker.
+  // Empty-state big button opens the file picker; the toolbar's "Upload another
+  // claim" resets all the way back to the home/empty state (keeping the Job #).
   const openPicker = () => document.getElementById("pdfInput").click();
-  document.getElementById("pdfBtn").addEventListener("click", openPicker);
   document.getElementById("emptyUploadBtn").addEventListener("click", openPicker);
+  document.getElementById("pdfBtn").addEventListener("click", resetToEmpty);
   document.getElementById("pdfInput").addEventListener("change", (e) => {
     const file = e.target.files[0];
     if (file) parsePdf(file);

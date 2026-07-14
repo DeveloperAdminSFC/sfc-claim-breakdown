@@ -76,6 +76,14 @@
     </div>
     <button id="emptyUploadBtn" class="btn btn-primary btn-upload-lg">Upload Claim PDF</button>
     <button id="emptySampleBtn" class="btn btn-ghost btn-sample-sm">Load sample instead</button>
+    <p class="empty-error" id="emptyError" hidden></p>
+  </div>
+
+  <!-- ============= PARSING PROGRESS (centered; shown while a parse is in flight) ============= -->
+  <div id="parsing" class="parsing" hidden>
+    <div class="spinner" aria-hidden="true"></div>
+    <p class="parsing-label">Parsing claim…</p>
+    <p class="parsing-sub">usually 10–40 seconds</p>
   </div>
 
   <!-- ===================== SUMMARY MODAL (holds the printable doc) ===================== -->

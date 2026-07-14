@@ -158,6 +158,33 @@ body {
 }
 .empty strong { color: var(--ink-soft); }
 .empty-lead { margin: 0; color: var(--ink-faint); }
+.empty-error { margin: 0; color: var(--neg); font-weight: 600; font-size: 13.5px; }
+
+/* Centered parse progress — occupies the same slot as the empty state. */
+.parsing {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  width: 100%;
+  padding: 24px;
+  text-align: center;
+}
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid #e5e7eb;
+  border-top-color: var(--ink);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.parsing-label { margin: 0; font-size: 15px; font-weight: 600; color: var(--ink); }
+.parsing-sub { margin: 0; font-size: 12.5px; color: var(--ink-faint); }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2s; } }
 
 /* Minimal, flat fields for the empty state (does not touch the review toolbar). */
 .empty .input {
