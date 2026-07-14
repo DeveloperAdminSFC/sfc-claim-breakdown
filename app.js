@@ -58,7 +58,7 @@ const ANTHROPIC_MODEL = "claude-sonnet-4-6"; // matches backend/app/routers/esti
 // Production backend (Cloud Run) used when no local API key is entered. Its
 // /api/estimates/{job}/parse endpoint parses the PDF server-side (no timeout limit,
 // unlike Netlify Functions). Fill in the real URL before deploy.
-const BACKEND_URL = "<CLOUD_RUN_BACKEND_URL>"; // fill in before deploy
+const BACKEND_URL = "https://sfc-backend-abc123-uc.a.run.app"; // fill in before deploy
 
 // The extraction prompt. Reuses the OI backend's PARSE_PROMPT, plus a richer summary
 // (insurance, deductible) for the header. Trade is NOT classified here — every line
