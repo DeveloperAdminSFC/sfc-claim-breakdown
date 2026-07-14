@@ -168,7 +168,6 @@ body {
   display: flex;
   flex-direction: column;
   width: 100%;
-  max-width: 8.5in;
   margin: 16px auto 0;
   padding: 0 24px 16px;
 }
@@ -202,6 +201,7 @@ body {
 .chk { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-soft); cursor: pointer; }
 .chk input { cursor: pointer; }
 .sel-count { font-size: 12px; color: var(--ink-faint); font-variant-numeric: tabular-nums; min-width: 74px; text-align: right; margin-left: auto; }
+.range-input { width: 180px; padding: 5px 8px; font-size: 12px; }
 
 .review-table-wrap {
   --actions-h: 0px;

@@ -179,9 +179,6 @@ function refreshAcvCell(i) {
   if (cell) cell.textContent = fmtUSD(it.acv);
 }
 
-// Anchor row for shift-click range selection; reset each render.
-let lastClickedIndex = null;
-
 // Recompute "N selected" and the header checkbox state from the live DOM (never
 // from a separately tracked count, which could drift).
 function updateSelCount() {
@@ -197,6 +194,31 @@ function updateSelCount() {
 function setLoadedChrome(loaded) {
   document.getElementById("empty").hidden = loaded;
   document.getElementById("toolbarActions").hidden = !loaded;
+}
+
+// Parse a line-number range string ("1-5, 7, 9, 21b") into a Set of line-number
+// strings that actually exist among the given items. Comma-separated tokens are
+// each either a numeric range "N-M" (expanded to N..M inclusive) or a single
+// token matched as an exact string against the item's displayed Line #.
+function parseLineRange(str, items) {
+  const present = new Set(items.map((it) => String(it.number)));
+  const wanted = new Set();
+  for (const raw of String(str).split(",")) {
+    const token = raw.trim();
+    if (!token) continue;
+    const m = token.match(/^(\d+)\s*-\s*(\d+)$/);
+    if (m) {
+      let lo = parseInt(m[1], 10), hi = parseInt(m[2], 10);
+      if (lo > hi) [lo, hi] = [hi, lo];
+      for (let n = lo; n <= hi; n++) {
+        const s = String(n);
+        if (present.has(s)) wanted.add(s);
+      }
+    } else if (present.has(token)) {
+      wanted.add(token);
+    }
+  }
+  return wanted;
 }
 
 function renderReview() {
@@ -245,23 +267,9 @@ function renderReview() {
     })
   );
 
-  // Row selection — plain click toggles one; shift-click extends a range from the
-  // last-clicked row to this one, matching the clicked box's post-click state
-  // (spreadsheet / email-client behavior).
-  lastClickedIndex = null;
-  const boxes = [...body.querySelectorAll(".row-chk")];
-  boxes.forEach((chk) =>
-    chk.addEventListener("click", (e) => {
-      // The browser has already toggled this checkbox by the time click fires.
-      const i = Number(e.currentTarget.dataset.i);
-      if (e.shiftKey && lastClickedIndex !== null && lastClickedIndex !== i) {
-        const targetState = e.currentTarget.checked; // propagate this box's new state
-        const lo = Math.min(lastClickedIndex, i), hi = Math.max(lastClickedIndex, i);
-        for (let j = lo; j <= hi; j++) boxes[j].checked = targetState; // only the slice
-      }
-      lastClickedIndex = i;
-      updateSelCount();
-    })
+  // Row selection — plain independent toggles.
+  body.querySelectorAll(".row-chk").forEach((chk) =>
+    chk.addEventListener("change", updateSelCount)
   );
 
   // Populate the trade select once.
@@ -511,24 +519,48 @@ function init() {
     renderDoc();
   });
 
-  // Apply the chosen trade to every checked row (printer-style multi-select).
+  // Apply the chosen trade. A typed line-number range takes priority; otherwise
+  // fall back to whatever checkboxes are manually checked.
   document.getElementById("applySelectedBtn").addEventListener("click", () => {
     const t = document.getElementById("bulkTradeSelect").value;
-    const checked = [...document.querySelectorAll("#reviewBody .row-chk:checked")];
-    if (!checked.length) return setStatus("Select one or more rows first (checkboxes on the left).", "error");
-    checked.forEach((chk) => {
-      const i = Number(chk.dataset.i);
+    const rangeEl = document.getElementById("rangeInput");
+    const rangeStr = rangeEl.value.trim();
+
+    let targetIndexes;
+    if (rangeStr) {
+      const wanted = parseLineRange(rangeStr, state.items);
+      targetIndexes = state.items.reduce((acc, it, i) => {
+        if (wanted.has(String(it.number))) acc.push(i);
+        return acc;
+      }, []);
+      if (!targetIndexes.length) return setStatus("No line items match that range.", "error");
+      // Reflect the range as the selection: check exactly the matched rows.
+      document.querySelectorAll("#reviewBody .row-chk").forEach((c) => (c.checked = false));
+    } else {
+      targetIndexes = [...document.querySelectorAll("#reviewBody .row-chk:checked")].map((c) => Number(c.dataset.i));
+      if (!targetIndexes.length) {
+        return setStatus("Type a line-number range (e.g. 1-5, 7, 9) or check some rows first.", "error");
+      }
+    }
+
+    targetIndexes.forEach((i) => {
       state.items[i].trade = t;
       const sel = document.querySelector(`.trade-select[data-i="${i}"]`);
       if (sel) sel.value = t;
+      if (rangeStr) {
+        const chk = document.querySelector(`.row-chk[data-i="${i}"]`);
+        if (chk) chk.checked = true; // visual confirmation of the matched rows
+      }
     });
-    setStatus(`Set ${checked.length} line item${checked.length === 1 ? "" : "s"} to ${t}.`, "ok");
+
+    updateSelCount();
+    if (rangeStr) rangeEl.value = ""; // clear for the next entry
+    setStatus(`Set ${targetIndexes.length} line item${targetIndexes.length === 1 ? "" : "s"} to ${t}.`, "ok");
   });
 
   // Select-all header checkbox toggles every row.
   document.getElementById("selectAll").addEventListener("change", (e) => {
     document.querySelectorAll("#reviewBody .row-chk").forEach((chk) => (chk.checked = e.target.checked));
-    lastClickedIndex = null;
     updateSelCount();
   });
 
