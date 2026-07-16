@@ -31,6 +31,9 @@ const TRADE_ORDER = [
   "FENCE",
   "GARAGE",
   "MISC",
+  // Contents / personal-property lines (bird bath, grill, patio furniture, …). This tool's copy
+  // only — NOT present in the OI platform's canonical TRADE_OPTIONS.
+  "PERSONAL PROPERTY",
   "Not Trade Related",
   "Not Categorized",
 ];
@@ -46,6 +49,7 @@ const TRADE_COLORS = {
   FENCE: "#f97316",
   GARAGE: "#6366f1",
   MISC: "#64748b",
+  "PERSONAL PROPERTY": "#d946ef", // fuchsia — distinct from the 11 above
   "Not Trade Related": "#94a3b8",
   "Not Categorized": "#cbd5e1",
 };
@@ -226,22 +230,27 @@ async function parsePdf(file) {
       const depreciation = Number(it.depreciation) || 0;
       return {
         number: it.number != null ? String(it.number) : "",
+        section: it.section || "", // top-level estimate section; drives the display prefix
         description: it.description || "",
         quantity: it.quantity || "",
         rcv: Number(it.rcv) || 0,
         depreciation,
-        // Seed non-recoverable from the notation Claude read; then it's freely editable.
+        // Seed non-recoverable from the type Claude derived; then it's freely editable.
         nonRecoverableDep: it.depreciationType === "non-recoverable" ? depreciation : 0,
         acv: (Number(it.rcv) || 0) - depreciation, // ACV is always RCV − Depreciation
         trade: "Not Categorized", // every line starts uncategorized
       };
     });
     if (!items.length) throw new Error("No line items found in this PDF.");
+    assignDisplayNumbers(items); // stamp displayNumber (C1… for later sections)
 
     // Mutate in place — do NOT reassign `state`, which would drop state.jobInfo
     // (the linked Job #) and blank the summary's Job #/Client rows.
     state.items = items;
     state.summary = parsed.summary || {};
+    // The backend couldn't confidently attribute the recoverable/non-recoverable split — surface
+    // it so the user sets the Non-Rec. Dep. column instead of trusting a silent default.
+    state.splitUndetermined = !!parsed.nonRecoverableSplitUndetermined;
 
     renderReview();
     setStatus(
@@ -278,15 +287,93 @@ function refreshAcvCell(i) {
   if (cell) cell.textContent = fmtUSD(it.acv);
 }
 
-// Recompute "N selected" and the header checkbox state from the live DOM (never
-// from a separately tracked count, which could drift).
-function updateSelCount() {
-  const boxes = document.querySelectorAll("#reviewBody .row-chk");
-  const n = document.querySelectorAll("#reviewBody .row-chk:checked").length;
-  document.getElementById("selCount").textContent = `${n} selected`;
-  const selectAll = document.getElementById("selectAll");
-  selectAll.checked = boxes.length > 0 && n === boxes.length;
-  selectAll.indeterminate = n > 0 && n < boxes.length;
+// Warn when the parser could not confidently attribute the recoverable vs non-recoverable
+// depreciation split. The claim's stated totals (when present) tell the user what the
+// Non-Rec. Dep. column should add up to once they set it by hand.
+function updateSplitBanner() {
+  const el = document.getElementById("splitBanner");
+  if (!el) return;
+  if (!state.splitUndetermined) {
+    el.hidden = true;
+    el.innerHTML = "";
+    return;
+  }
+  const s = state.summary || {};
+  let guide = "";
+  if (s.totalNonRecoverableDepreciation != null) {
+    guide = ` The claim states non-recoverable depreciation = <strong>${fmtUSD(s.totalNonRecoverableDepreciation)}</strong>` +
+      (s.totalRecoverableDepreciation != null ? ` and recoverable = ${fmtUSD(s.totalRecoverableDepreciation)}` : "") + ".";
+  }
+  el.innerHTML =
+    `<strong>Non-recoverable split not auto-detected.</strong> ` +
+    `Set the <em>Non-Rec. Dep.</em> column manually for the affected lines.${guide}`;
+  el.hidden = false;
+}
+
+// ---- Build-summary reconciliation (fires on "Build summary") ----
+// True when two dollar amounts are equal to the cent (penny-exact; no tolerance).
+function centsEqual(a, b) {
+  return Math.round((Number(a) || 0) * 100) === Math.round((Number(b) || 0) * 100);
+}
+
+// Compare the line-item sums against the claim's own summary figures on four rows. The ACV row
+// uses the carrier identity RCV − costsPayableWhenIncurred − recoverableDep − nonRecoverableDep,
+// so a claim with a "costs payable when incurred" line (e.g. deferred debris removal) still
+// reconciles. Rows whose summary figure is missing are shown but not counted as a mismatch.
+function reconcileSummary() {
+  const s = state.summary || {};
+  const items = state.items;
+  const sumRCV = items.reduce((a, it) => a + (Number(it.rcv) || 0), 0);
+  const sumNonRec = items.reduce((a, it) => a + (Number(it.nonRecoverableDep) || 0), 0);
+  const sumRecov = items.reduce(
+    (a, it) => a + Math.max(0, (Number(it.depreciation) || 0) - (Number(it.nonRecoverableDep) || 0)),
+    0
+  );
+  const costsPayable = Number(s.costsPayableWhenIncurred) || 0; // optional; 0 when absent
+  const acvLineItems = sumRCV - costsPayable - sumRecov - sumNonRec;
+
+  const defs = [
+    { label: "RCV", lineItems: sumRCV, claim: s.totalRCV },
+    { label: "Recoverable Dep.", lineItems: sumRecov, claim: s.totalRecoverableDepreciation },
+    { label: "Non-Recoverable Dep.", lineItems: sumNonRec, claim: s.totalNonRecoverableDepreciation },
+    { label: "ACV", lineItems: acvLineItems, claim: s.totalACV },
+  ];
+  const rows = defs.map((d) => {
+    const comparable = d.claim != null;
+    return {
+      label: d.label,
+      lineItems: d.lineItems,
+      claim: d.claim,
+      comparable,
+      match: !comparable || centsEqual(d.lineItems, d.claim),
+    };
+  });
+  return { ok: rows.every((r) => r.match), rows };
+}
+
+function showDiscrepancyModal(rows) {
+  const body = document.getElementById("discBody");
+  body.innerHTML = rows
+    .map((r) => {
+      const claimCell = r.comparable ? fmtUSD(r.claim) : "—";
+      const status = !r.comparable
+        ? '<span class="disc-na">not stated</span>'
+        : r.match
+        ? '<span class="disc-ok">✓</span>'
+        : `<span class="disc-bad">✗ off by ${fmtUSD(Math.abs(r.lineItems - r.claim))}</span>`;
+      return `<tr class="${r.comparable && !r.match ? "disc-row-bad" : ""}">
+        <td class="disc-label">${esc(r.label)}</td>
+        <td class="disc-vals"><span class="disc-k">Line Items</span> ${fmtUSD(r.lineItems)}</td>
+        <td class="disc-vals"><span class="disc-k">Claim Summary</span> ${claimCell}</td>
+        <td class="disc-status">${status}</td>
+      </tr>`;
+    })
+    .join("");
+  document.getElementById("discrepancyModal").hidden = false;
+}
+
+function closeDiscrepancyModal() {
+  document.getElementById("discrepancyModal").hidden = true;
 }
 
 // Toggle the empty-state (big upload button) vs. loaded chrome (compact toolbar).
@@ -326,8 +413,10 @@ function clearEmptyError() {
 function resetToEmpty() {
   state.items = [];
   state.summary = {};
+  state.splitUndetermined = false;
   // state.jobInfo intentionally left untouched.
   closeSummaryModal();
+  closeDiscrepancyModal();
   document.getElementById("review").hidden = true;
   document.getElementById("doc").innerHTML = "";
   hideParsing();
@@ -337,38 +426,84 @@ function resetToEmpty() {
   syncJobUI();              // repaint preserved Job # + "✓ <name>" in the empty picker
 }
 
-// Parse a line-number range string ("1-5, 7, 9, 21b") into a Set of line-number
-// strings that actually exist among the given items. Comma-separated tokens are
-// each either a numeric range "N-M" (expanded to N..M inclusive) or a single
-// token matched as an exact string against the item's displayed Line #.
+// Stamp every item with a `displayNumber` = section prefix + raw line number. Line numbers
+// restart per estimate section in many claims (Structure 1..N, then Contents 1..M), so without a
+// prefix the same number collides across sections and can't be addressed unambiguously.
+//
+// Prefix scheme (predictable — you can work out any section's prefix by hand):
+//   • Sections are handled in the order they first appear in the item list.
+//   • The FIRST section gets NO prefix — its lines display as 1, 2, 3…
+//   • Each later section gets prefix = first alphanumeric char of its name, uppercased
+//     (Contents → "C" → C1, C2…).
+//   • De-collision: if that letter was already taken by an earlier prefixed section, the count of
+//     sections sharing that letter is appended, starting at 2 (a second "C" section → "C2").
+//   • Items whose section is "" (unlabeled) belong to the first section.
+function assignDisplayNumbers(items) {
+  const prefixBySection = new Map(); // section name -> prefix string
+  const baseCount = new Map();       // base letter -> how many prefixed sections have used it
+  let sectionIndex = 0;
+  for (const it of items) {
+    const section = it.section || "";
+    if (!prefixBySection.has(section)) {
+      sectionIndex += 1;
+      let prefix = "";
+      if (sectionIndex > 1) {
+        const m = String(section).match(/[A-Za-z0-9]/);
+        const base = (m ? m[0] : String(sectionIndex)).toUpperCase();
+        const n = (baseCount.get(base) || 0) + 1;
+        baseCount.set(base, n);
+        prefix = n === 1 ? base : base + n;
+      }
+      prefixBySection.set(section, prefix);
+    }
+    it.sectionPrefix = prefixBySection.get(section);
+    it.displayNumber = it.sectionPrefix + String(it.number);
+  }
+  return items;
+}
+
+// Parse a line-range string ("1-5, 7, C1-C3, 21b") against the items' displayNumbers.
+// Returns { wanted, bad }:
+//   • wanted — Set of matched displayNumbers.
+//   • bad    — array of tokens that were malformed (a range with mismatched prefixes like
+//              "C1-9" / "1-C5", or otherwise unparseable) so the caller can name them.
+// Each comma token is a single ref (optional letter prefix + digits, or an exact displayNumber
+// like "21b") or a same-prefix range <prefix><lo>-<prefix><hi>; case-insensitive; a prefixed
+// range expands only within its own prefix. A single ref that simply isn't present is ignored
+// (it may reference a filtered/nonexistent line) — only structurally broken tokens are "bad".
 function parseLineRange(str, items) {
-  const present = new Set(items.map((it) => String(it.number)));
+  const present = new Map(); // UPPERCASE displayNumber -> actual displayNumber
+  for (const it of items) present.set(String(it.displayNumber).toUpperCase(), String(it.displayNumber));
   const wanted = new Set();
+  const bad = [];
   for (const raw of String(str).split(",")) {
     const token = raw.trim();
     if (!token) continue;
-    const m = token.match(/^(\d+)\s*-\s*(\d+)$/);
-    if (m) {
-      let lo = parseInt(m[1], 10), hi = parseInt(m[2], 10);
+    const U = token.toUpperCase();
+    if (U.includes("-")) {
+      const rng = U.match(/^([A-Z]*)(\d+)\s*-\s*([A-Z]*)(\d+)$/);
+      if (!rng || rng[1] !== rng[3]) { bad.push(token); continue; } // malformed / mismatched prefixes
+      const prefix = rng[1];
+      let lo = parseInt(rng[2], 10), hi = parseInt(rng[4], 10);
       if (lo > hi) [lo, hi] = [hi, lo];
       for (let n = lo; n <= hi; n++) {
-        const s = String(n);
-        if (present.has(s)) wanted.add(s);
+        const key = (prefix + n).toUpperCase();
+        if (present.has(key)) wanted.add(present.get(key));
       }
-    } else if (present.has(token)) {
-      wanted.add(token);
+    } else if (present.has(U)) {
+      wanted.add(present.get(U));
     }
+    // else: a single token that isn't present — ignored quietly, as before.
   }
-  return wanted;
+  return { wanted, bad };
 }
 
 function renderReview() {
   const body = document.getElementById("reviewBody");
   body.innerHTML = state.items
     .map((it, i) => `
-      <tr>
-        <td class="ctr sel-col"><input type="checkbox" class="row-chk" data-i="${i}" /></td>
-        <td class="num">${esc(it.number)}</td>
+      <tr data-i="${i}">
+        <td class="num">${esc(it.displayNumber)}</td>
         <td class="left desc">${esc(it.description)}</td>
         <td class="left">${esc(it.quantity)}</td>
         <td class="edit-col">${moneyInput("rcv-in", i, it.rcv)}</td>
@@ -408,17 +543,12 @@ function renderReview() {
     })
   );
 
-  // Row selection — plain independent toggles.
-  body.querySelectorAll(".row-chk").forEach((chk) =>
-    chk.addEventListener("change", updateSelCount)
-  );
-
-  // Populate the trade select once.
+  // Populate the bulk trade select once.
   const bulk = document.getElementById("bulkTradeSelect");
   if (!bulk.options.length) {
     bulk.innerHTML = TRADE_ORDER.map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join("");
   }
-  updateSelCount();
+  updateSplitBanner();
 
   document.getElementById("review").hidden = false;
   hideParsing();
@@ -455,7 +585,7 @@ function groupByTrade(items) {
     return {
       trade: t,
       color: TRADE_COLORS[t] || "#94a3b8",
-      items: [...its].sort((x, y) => compareLineNumbers(x.number, y.number)),
+      items: [...its].sort((x, y) => compareLineNumbers(x.displayNumber, y.displayNumber)),
       rcv, dep, nonRecDep, acv,
     };
   });
@@ -464,7 +594,6 @@ function groupByTrade(items) {
 function renderDoc() {
   const items = state.items;
   const md = state.summary || {};
-  const includeDetail = document.getElementById("detailToggle").checked;
   const groups = groupByTrade(items);
 
   const totals = groups.reduce(
@@ -543,10 +672,8 @@ function renderDoc() {
       </p>
     </section>`;
 
-  // ---------- Optional detail pages: one per trade ----------
-  let detailPages = "";
-  if (includeDetail) {
-    detailPages = groups
+  // ---------- Detail pages: one per trade (always generated) ----------
+  const detailPages = groups
       .map((g) => {
         const rows = g.items
           .map((it) => {
@@ -554,7 +681,7 @@ function renderDoc() {
             const nr = nrAmt > 0 ? '<span class="nr-tag">NON-REC</span>' : "";
             return `
             <tr>
-              <td class="num">${esc(it.number)}</td>
+              <td class="num">${esc(it.displayNumber)}</td>
               <td class="left desc">${esc(it.description)}${nr}</td>
               <td class="left">${esc(it.quantity)}</td>
               <td>${fmtUSD(it.rcv)}</td>
@@ -588,7 +715,6 @@ function renderDoc() {
         </section>`;
       })
       .join("");
-  }
 
   const docEl = document.getElementById("doc");
   docEl.innerHTML = page1 + detailPages;
@@ -617,6 +743,7 @@ async function loadSample() {
       const rcv = Number(it.rcv) || 0;
       return {
         number: it.number != null ? String(it.number) : "",
+        section: it.section || "",
         description: it.description || "",
         quantity: it.quantity || "",
         rcv,
@@ -626,6 +753,7 @@ async function loadSample() {
         trade: "Not Categorized", // start uncategorized, like a real parse
       };
     });
+    assignDisplayNumbers(items);
     const m = group.metadata || {};
     const sumOP = src.reduce((s, it) => s + (Number(it.op) || 0), 0);
     const sumTax = src.reduce((s, it) => s + (Number(it.tax) || 0), 0);
@@ -639,6 +767,7 @@ async function loadSample() {
       totalOP: m.total_op != null ? m.total_op : (sumOP || null),
       totalTax: m.total_tax != null ? m.total_tax : (sumTax || null),
     };
+    state.splitUndetermined = false;
     renderReview();
     setStatus(`Loaded sample: ${items.length} line items. All start “Not Categorized” — select and assign trades, then Build summary.`, "ok");
   } catch {
@@ -662,62 +791,68 @@ function init() {
     e.target.value = ""; // allow re-selecting the same file
   });
 
+  // Build the summary — but first reconcile the line items against the claim's own summary page.
+  // If everything ties out, build straight away; otherwise show the discrepancy modal.
   document.getElementById("buildBtn").addEventListener("click", () => {
     if (!state.items.length) return setStatus("Nothing to build yet — upload a PDF first.", "error");
-    renderDoc();
+    const { ok, rows } = reconcileSummary();
+    if (ok) return renderDoc();
+    showDiscrepancyModal(rows);
   });
 
-  // Apply the chosen trade. A typed line-number range takes priority; otherwise
-  // fall back to whatever checkboxes are manually checked.
-  document.getElementById("applySelectedBtn").addEventListener("click", () => {
+  // Apply the chosen trade to the lines named in the range field (the single bulk path).
+  document.getElementById("applyLinesBtn").addEventListener("click", () => {
     const t = document.getElementById("bulkTradeSelect").value;
     const rangeEl = document.getElementById("rangeInput");
     const rangeStr = rangeEl.value.trim();
+    if (!rangeStr) {
+      return setStatus("Type a line-number range (e.g. 1-5, 7, C1-C3) to apply a trade.", "error");
+    }
 
-    let targetIndexes;
-    if (rangeStr) {
-      const wanted = parseLineRange(rangeStr, state.items);
-      targetIndexes = state.items.reduce((acc, it, i) => {
-        if (wanted.has(String(it.number))) acc.push(i);
-        return acc;
-      }, []);
-      if (!targetIndexes.length) return setStatus("No line items match that range.", "error");
-      // Reflect the range as the selection: check exactly the matched rows.
-      document.querySelectorAll("#reviewBody .row-chk").forEach((c) => (c.checked = false));
-    } else {
-      targetIndexes = [...document.querySelectorAll("#reviewBody .row-chk:checked")].map((c) => Number(c.dataset.i));
-      if (!targetIndexes.length) {
-        return setStatus("Type a line-number range (e.g. 1-5, 7, 9) or check some rows first.", "error");
-      }
+    const { wanted, bad } = parseLineRange(rangeStr, state.items);
+    const badNote = bad.length ? ` Ignored invalid token${bad.length === 1 ? "" : "s"}: ${bad.join(", ")}.` : "";
+
+    const targetIndexes = state.items.reduce((acc, it, i) => {
+      if (wanted.has(String(it.displayNumber))) acc.push(i);
+      return acc;
+    }, []);
+    if (!targetIndexes.length) {
+      return setStatus(`No line items match that range.${badNote}`, "error");
     }
 
     targetIndexes.forEach((i) => {
       state.items[i].trade = t;
       const sel = document.querySelector(`.trade-select[data-i="${i}"]`);
       if (sel) sel.value = t;
-      if (rangeStr) {
-        const chk = document.querySelector(`.row-chk[data-i="${i}"]`);
-        if (chk) chk.checked = true; // visual confirmation of the matched rows
-      }
     });
 
-    updateSelCount();
-    if (rangeStr) rangeEl.value = ""; // clear for the next entry
-    setStatus(`Set ${targetIndexes.length} line item${targetIndexes.length === 1 ? "" : "s"} to ${t}.`, "ok");
-  });
-
-  // Select-all header checkbox toggles every row.
-  document.getElementById("selectAll").addEventListener("change", (e) => {
-    document.querySelectorAll("#reviewBody .row-chk").forEach((chk) => (chk.checked = e.target.checked));
-    updateSelCount();
+    rangeEl.value = ""; // clear for the next entry
+    setStatus(
+      `Set ${targetIndexes.length} line item${targetIndexes.length === 1 ? "" : "s"} to ${t}.${badNote}`,
+      bad.length ? "error" : "ok"
+    );
   });
 
   // Summary modal controls: download, and close via ✕ / backdrop / Escape.
   document.getElementById("downloadModalBtn").addEventListener("click", () => window.print());
   document.getElementById("closeModalBtn").addEventListener("click", closeSummaryModal);
   document.getElementById("modalBackdrop").addEventListener("click", closeSummaryModal);
+
+  // Discrepancy modal: "Fix Discrepancy" returns to the review table; "Build Anyway" builds as-is.
+  document.getElementById("fixDiscBtn").addEventListener("click", () => {
+    closeDiscrepancyModal();
+    document.getElementById("review").scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+  document.getElementById("buildAnywayBtn").addEventListener("click", () => {
+    closeDiscrepancyModal();
+    renderDoc();
+  });
+  document.getElementById("discBackdrop").addEventListener("click", closeDiscrepancyModal);
+
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !document.getElementById("summaryModal").hidden) closeSummaryModal();
+    if (e.key !== "Escape") return;
+    if (!document.getElementById("discrepancyModal").hidden) return closeDiscrepancyModal();
+    if (!document.getElementById("summaryModal").hidden) closeSummaryModal();
   });
 
   // Sample buttons (empty state + toolbar).

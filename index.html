@@ -33,23 +33,18 @@
       <p class="review-eyebrow">Step 2 · Categorize by trade</p>
       <h2 class="review-title">Assign each line item to a trade, then build the summary.</h2>
     </div>
+    <div id="splitBanner" class="banner banner-warn" hidden></div>
     <div class="review-table-wrap">
       <div class="review-actions">
-        <label class="chk">
-          <input type="checkbox" id="detailToggle" />
-          <span>Include per-trade detail pages</span>
-        </label>
-        <span class="sel-count" id="selCount">0 selected</span>
         <input id="rangeInput" class="input range-input" type="text" autocomplete="off"
-          spellcheck="false" placeholder="e.g. 1-5, 7, 9" title="Line numbers to apply the trade to" />
+          spellcheck="false" placeholder="e.g. 1-5, 7, C1-C3" title="Line numbers to apply the trade to" />
         <select id="bulkTradeSelect" class="input input-select"></select>
-        <button id="applySelectedBtn" class="btn">Apply to selected</button>
+        <button id="applyLinesBtn" class="btn">Apply to lines</button>
         <button id="buildBtn" class="btn btn-primary">Build summary ↓</button>
       </div>
       <table class="review-table">
         <thead>
           <tr>
-            <th class="ctr sel-col"><input type="checkbox" id="selectAll" title="Select all rows" /></th>
             <th class="left">Line&nbsp;#</th>
             <th class="left">Description</th>
             <th class="left">Quantity</th>
@@ -100,6 +95,26 @@
       <div class="modal-body">
         <main id="doc" class="doc"><!-- Populated by app.js --></main>
       </div>
+    </div>
+  </div>
+
+  <!-- ============ DISCREPANCY MODAL (line items vs claim summary, on Build) ============ -->
+  <div id="discrepancyModal" class="modal" hidden>
+    <div class="modal-backdrop" id="discBackdrop"></div>
+    <div class="modal-panel modal-panel-sm" role="dialog" aria-modal="true" aria-label="Summary discrepancy">
+      <header class="modal-bar">
+        <span class="modal-title">Line items don't match the claim summary</span>
+      </header>
+      <div class="modal-body">
+        <p class="disc-lead">These parsed totals don't reconcile to the claim's own summary page.
+          Review before building — the carrier's math is occasionally off, but usually this means a
+          value (often the Non-Rec. Dep. split) needs correcting.</p>
+        <table class="disc-table"><tbody id="discBody"></tbody></table>
+      </div>
+      <footer class="modal-foot">
+        <button id="fixDiscBtn" class="btn">Fix Discrepancy</button>
+        <button id="buildAnywayBtn" class="btn btn-primary">Build Anyway</button>
+      </footer>
     </div>
   </div>
 
