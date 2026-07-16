@@ -386,11 +386,9 @@ function setLoadedChrome(loaded) {
   document.getElementById("toolbarActions").hidden = !loaded;
 }
 
-// Centered parse progress (replaces the empty-state content while a parse runs).
-// Mark-based claims (e.g. Liberty Mutual) trigger a SECOND server-side read of the depreciation
-// column, which can push the total to ~1–2 minutes. That second pass is invisible to the browser
-// (one HTTP request), so after ~40s we escalate the copy client-side — a silent 110s spinner
-// otherwise reads as broken.
+// Centered parse progress (replaces the empty-state content while a parse runs). A parse is a
+// single server call (~20–60s on most claims; large multi-page ones longer), so after ~45s we
+// gently escalate the copy client-side — a long, silent spinner otherwise reads as broken.
 let parsingStageTimer = null;
 function showParsing() {
   clearEmptyError();
@@ -400,12 +398,11 @@ function showParsing() {
   const label = document.getElementById("parsingLabel");
   const sub = document.getElementById("parsingSub");
   label.textContent = "Parsing claim…";
-  sub.textContent = "usually 15–45 seconds";
+  sub.textContent = "usually 20–60 seconds";
   clearTimeout(parsingStageTimer);
   parsingStageTimer = setTimeout(() => {
-    label.textContent = "Reading depreciation column…";
-    sub.textContent = "detailed claims take up to ~2 minutes";
-  }, 40000);
+    sub.textContent = "large multi-page claims can take a bit longer…";
+  }, 45000);
 }
 function hideParsing() {
   clearTimeout(parsingStageTimer);
