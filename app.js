@@ -226,6 +226,10 @@ async function parsePdf(file) {
   try {
     const parsed = await requestParse(file);
 
+    // When the backend couldn't attribute the split, start the Non-Rec. Dep. column at ZERO — a
+    // clean slate — rather than seeding it with an unreliable guess. The banner shows the stated
+    // non-recoverable total so the user can mark lines by hand.
+    const splitUndetermined = !!parsed.nonRecoverableSplitUndetermined;
     const items = (parsed.items || []).map((it) => {
       const depreciation = Number(it.depreciation) || 0;
       return {
@@ -235,8 +239,9 @@ async function parsePdf(file) {
         quantity: it.quantity || "",
         rcv: Number(it.rcv) || 0,
         depreciation,
-        // Seed non-recoverable from the type Claude derived; then it's freely editable.
-        nonRecoverableDep: it.depreciationType === "non-recoverable" ? depreciation : 0,
+        // Seed non-recoverable from the type Claude derived — but only when the split is trusted.
+        nonRecoverableDep:
+          !splitUndetermined && it.depreciationType === "non-recoverable" ? depreciation : 0,
         acv: (Number(it.rcv) || 0) - depreciation, // ACV is always RCV − Depreciation
         trade: "Not Categorized", // every line starts uncategorized
       };
@@ -248,9 +253,8 @@ async function parsePdf(file) {
     // (the linked Job #) and blank the summary's Job #/Client rows.
     state.items = items;
     state.summary = parsed.summary || {};
-    // The backend couldn't confidently attribute the recoverable/non-recoverable split — surface
-    // it so the user sets the Non-Rec. Dep. column instead of trusting a silent default.
-    state.splitUndetermined = !!parsed.nonRecoverableSplitUndetermined;
+    // Surface the undetermined split so the user sets the Non-Rec. Dep. column manually.
+    state.splitUndetermined = splitUndetermined;
 
     renderReview();
     setStatus(
@@ -383,13 +387,28 @@ function setLoadedChrome(loaded) {
 }
 
 // Centered parse progress (replaces the empty-state content while a parse runs).
+// Mark-based claims (e.g. Liberty Mutual) trigger a SECOND server-side read of the depreciation
+// column, which can push the total to ~1–2 minutes. That second pass is invisible to the browser
+// (one HTTP request), so after ~40s we escalate the copy client-side — a silent 110s spinner
+// otherwise reads as broken.
+let parsingStageTimer = null;
 function showParsing() {
   clearEmptyError();
   setStatus(""); // keep the top-left clean during parse
   document.getElementById("empty").hidden = true;
   document.getElementById("parsing").hidden = false;
+  const label = document.getElementById("parsingLabel");
+  const sub = document.getElementById("parsingSub");
+  label.textContent = "Parsing claim…";
+  sub.textContent = "usually 15–45 seconds";
+  clearTimeout(parsingStageTimer);
+  parsingStageTimer = setTimeout(() => {
+    label.textContent = "Reading depreciation column…";
+    sub.textContent = "detailed claims take up to ~2 minutes";
+  }, 40000);
 }
 function hideParsing() {
+  clearTimeout(parsingStageTimer);
   document.getElementById("parsing").hidden = true;
 }
 
