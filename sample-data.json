@@ -18,7 +18,7 @@
       { "id": "10", "number": "10", "description": "House wrap (Tyvek)", "quantity": "410.00 SF", "op": 67.65, "tax": 25.60, "rcv": 451.00, "depreciation": 0.00, "depreciationType": "recoverable", "acv": 451.00, "trade": "SIDING", "is_billable": true },
       { "id": "11", "number": "11", "description": "Detach & reset gutter for siding work", "quantity": "1.00 EA", "op": 31.50, "tax": 0.00, "rcv": 210.00, "depreciation": 62.50, "depreciationType": "non-recoverable", "acv": 147.50, "trade": "SIDING", "is_billable": true },
       { "id": "12", "number": "12", "description": "R&R window screen", "quantity": "4.00 EA", "op": 51.00, "tax": 16.80, "rcv": 340.00, "depreciation": 102.00, "depreciationType": "recoverable", "acv": 238.00, "trade": "WINDOWS", "is_billable": true },
-      { "id": "13", "number": "13", "description": "General cleanup / dumpster", "quantity": "1.00 EA", "op": 97.50, "tax": 0.00, "rcv": 650.00, "depreciation": 0.00, "depreciationType": "recoverable", "acv": 650.00, "trade": "MISC", "is_billable": true }
+      { "id": "13", "number": "13", "description": "Debris removal / dumpster", "quantity": "1.00 EA", "op": 97.50, "tax": 0.00, "rcv": 650.00, "depreciation": 0.00, "depreciationType": "recoverable", "acv": 650.00, "trade": "MISC", "is_billable": true, "paidWhenIncurred": true }
     ]
   },
   "initial": {

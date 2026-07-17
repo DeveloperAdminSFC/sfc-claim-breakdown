@@ -6,17 +6,26 @@
      2. The PDF is sent to the Cloud Run backend's /api/estimates/{job}/parse
         endpoint, which extracts every line item.
      3. You review/correct the trade on each line.
-     4. Build a one-page summary (O&P · Tax · RCV · Depreciation · Non-Recoverable
-        Dep · ACV by trade) and Save as PDF.
+     4. Build a one-page summary (O&P · Tax · RCV · Paid When Incurred · Recoverable
+        Dep · Non-Recoverable Dep · ACV by trade) and Save as PDF.
 
    Nothing is persisted. Parsed line items live in the page for the session and
    are gone on refresh.
 
-   Math conventions mirror the OI platform:
-     • Non-recoverable dep = depreciationType === "non-recoverable" ? depreciation : 0
-     • RCV − Depreciation = ACV per line and per trade.
-     • O&P / Taxes are NOT tracked per trade — they exist only as estimate-wide
-       totals, shown in the summary Total row.
+   Depreciation is TWO mutually-exclusive buckets — never a single "depreciation"
+   number. Every depreciating line is EITHER recoverable OR non-recoverable:
+     • recoverableDep + nonRecoverableDep = the line's total depreciation (one is 0).
+     • When the split is undetermined, BOTH are 0 (a blank slate the user fills in) —
+       we never dump the amount into recoverableDep and call it recoverable.
+   Paid-when-incurred lines (struck through in the source; carrier marks debris
+   removal etc. as paid at actuals) are carved OUT of ACV:
+     • paidWhenIncurred (bool) per line; its carve-out amount is the line's own RCV.
+     • Line-level ACV = RCV − recoverableDep − nonRecoverableDep (the struck line
+       still shows its full RCV as ACV, matching the source document).
+     • Trade / grand-total ACV additionally subtracts Σ paidWhenIncurred, so the
+       total lands on the claim's stated ACV. The exclusion happens once, at the roll-up.
+   O&P / Taxes are NOT tracked per trade — they exist only as estimate-wide totals,
+   shown in the summary Total row.
    ========================================================================== */
 
 // ------------------------------- Trades ---------------------------------- //
@@ -68,6 +77,9 @@ let state = { items: [], summary: {}, jobInfo: null };
 // ------------------------------ Helpers ---------------------------------- //
 const fmtUSD = (n) =>
   (Number(n) || 0).toLocaleString("en-US", { style: "currency", currency: "USD" });
+
+// Em-dash placeholder for an empty/zero money cell.
+const dashHTML = '<span class="dash">—</span>';
 
 const esc = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (c) =>
@@ -231,18 +243,29 @@ async function parsePdf(file) {
     // non-recoverable total so the user can mark lines by hand.
     const splitUndetermined = !!parsed.nonRecoverableSplitUndetermined;
     const items = (parsed.items || []).map((it) => {
-      const depreciation = Number(it.depreciation) || 0;
+      const rcv = Number(it.rcv) || 0;
+      const dep = Number(it.depreciation) || 0; // parser still emits total dep + a type
+      // Split into the two buckets from the type the parser derived — but ONLY when the
+      // split is trusted. When undetermined, both stay 0: a blank slate the user fills in
+      // (do NOT dump the amount into recoverableDep — the tool doesn't know it's recoverable).
+      let recoverableDep = 0;
+      let nonRecoverableDep = 0;
+      if (!splitUndetermined && dep > 0) {
+        if (it.depreciationType === "non-recoverable") nonRecoverableDep = dep;
+        else recoverableDep = dep; // parser reconciled penny-exact → "recoverable" is trustworthy
+      }
       return {
         number: it.number != null ? String(it.number) : "",
         section: it.section || "", // top-level estimate section; drives the display prefix
         description: it.description || "",
         quantity: it.quantity || "",
-        rcv: Number(it.rcv) || 0,
-        depreciation,
-        // Seed non-recoverable from the type Claude derived — but only when the split is trusted.
-        nonRecoverableDep:
-          !splitUndetermined && it.depreciationType === "non-recoverable" ? depreciation : 0,
-        acv: (Number(it.rcv) || 0) - depreciation, // ACV is always RCV − Depreciation
+        rcv,
+        recoverableDep,
+        nonRecoverableDep,
+        // Struck-through in the source = paid when incurred (carved out of the claim's ACV).
+        // Additive/optional flag from the parser; absent on carriers without struck lines.
+        paidWhenIncurred: !!it.paidWhenIncurred,
+        acv: rcv - recoverableDep - nonRecoverableDep, // line ACV; PWI carve-out is applied at the roll-up
         trade: "Not Categorized", // every line starts uncategorized
       };
     });
@@ -283,12 +306,22 @@ function moneyInput(cls, i, value) {
   return `<input type="number" step="0.01" min="0" inputmode="decimal" class="amt ${cls}" data-i="${i}" value="${Number(value) || 0}" />`;
 }
 
-// Recompute a row's ACV cell live: ACV = RCV − Depreciation.
+// Recompute a row's ACV cell live: ACV = RCV − Recoverable Dep − Non-Recoverable Dep.
+// Paid-when-incurred is NOT subtracted here — a struck line still shows its full RCV as ACV
+// (matching the source); the carve-out is applied once, at the trade / grand total.
 function refreshAcvCell(i) {
   const it = state.items[i];
-  it.acv = (Number(it.rcv) || 0) - (Number(it.depreciation) || 0);
+  it.acv = (Number(it.rcv) || 0) - (Number(it.recoverableDep) || 0) - (Number(it.nonRecoverableDep) || 0);
   const cell = document.querySelector(`.acv-cell[data-i="${i}"]`);
   if (cell) cell.textContent = fmtUSD(it.acv);
+}
+
+// A struck (paid-when-incurred) line shows its RCV in the PWI column; keep it in sync
+// when RCV is edited. Unflagged lines show a dash and never change here.
+function refreshPwiCell(i) {
+  const it = state.items[i];
+  const cell = document.querySelector(`tr[data-i="${i}"] .pwi-cell`);
+  if (cell) cell.innerHTML = it.paidWhenIncurred ? fmtUSD(Number(it.rcv) || 0) : dashHTML;
 }
 
 // Warn when the parser could not confidently attribute the recoverable vs non-recoverable
@@ -320,21 +353,20 @@ function centsEqual(a, b) {
   return Math.round((Number(a) || 0) * 100) === Math.round((Number(b) || 0) * 100);
 }
 
-// Compare the line-item sums against the claim's own summary figures on four rows. The ACV row
-// uses the carrier identity RCV − costsPayableWhenIncurred − recoverableDep − nonRecoverableDep,
-// so a claim with a "costs payable when incurred" line (e.g. deferred debris removal) still
-// reconciles. Rows whose summary figure is missing are shown but not counted as a mismatch.
+// Compare the line-item sums against the claim's own summary figures on four rows. Each bucket is
+// summed DIRECTLY from its own per-line field (recoverable and non-recoverable are stored
+// separately, not derived by subtraction). The ACV row uses the carrier identity
+// RCV − paidWhenIncurred − recoverableDep − nonRecoverableDep, where the paid-when-incurred sum is
+// the RCV of each struck line — so a claim with deferred debris removal still reconciles.
+// Rows whose summary figure is missing are shown but not counted as a mismatch.
 function reconcileSummary() {
   const s = state.summary || {};
   const items = state.items;
   const sumRCV = items.reduce((a, it) => a + (Number(it.rcv) || 0), 0);
+  const sumRecov = items.reduce((a, it) => a + (Number(it.recoverableDep) || 0), 0);
   const sumNonRec = items.reduce((a, it) => a + (Number(it.nonRecoverableDep) || 0), 0);
-  const sumRecov = items.reduce(
-    (a, it) => a + Math.max(0, (Number(it.depreciation) || 0) - (Number(it.nonRecoverableDep) || 0)),
-    0
-  );
-  const costsPayable = Number(s.costsPayableWhenIncurred) || 0; // optional; 0 when absent
-  const acvLineItems = sumRCV - costsPayable - sumRecov - sumNonRec;
+  const sumPWI = items.reduce((a, it) => a + (it.paidWhenIncurred ? Number(it.rcv) || 0 : 0), 0);
+  const acvLineItems = sumRCV - sumPWI - sumRecov - sumNonRec;
 
   const defs = [
     { label: "RCV", lineItems: sumRCV, claim: s.totalRCV },
@@ -518,12 +550,13 @@ function renderReview() {
   const body = document.getElementById("reviewBody");
   body.innerHTML = state.items
     .map((it, i) => `
-      <tr data-i="${i}">
+      <tr data-i="${i}"${it.paidWhenIncurred ? ' class="pwi-row"' : ""}>
         <td class="num">${esc(it.displayNumber)}</td>
-        <td class="left desc">${esc(it.description)}</td>
+        <td class="left desc">${esc(it.description)}${it.paidWhenIncurred ? '<span class="pwi-tag">PAID WHEN INCURRED</span>' : ""}</td>
         <td class="left">${esc(it.quantity)}</td>
         <td class="edit-col">${moneyInput("rcv-in", i, it.rcv)}</td>
-        <td class="edit-col">${moneyInput("dep-in", i, it.depreciation)}</td>
+        <td class="pwi-cell">${it.paidWhenIncurred ? fmtUSD(it.rcv) : dashHTML}</td>
+        <td class="edit-col">${moneyInput("rec-in", i, it.recoverableDep)}</td>
         <td class="edit-col">${moneyInput("nonrec-in", i, it.nonRecoverableDep)}</td>
         <td class="acv-cell" data-i="${i}">${fmtUSD(it.acv)}</td>
         <td class="left">${tradeSelectHTML(it.trade, `data-i="${i}"`)}</td>
@@ -537,18 +570,21 @@ function renderReview() {
     })
   );
 
-  // Editable amounts. RCV / Depreciation drive ACV live; Non-Rec is independent.
+  // Editable amounts. RCV and BOTH depreciation buckets drive ACV live. The two dep
+  // buckets are independent inputs so a value can be moved between recoverable and
+  // non-recoverable; ACV = RCV − recoverable − non-recoverable.
   body.querySelectorAll(".rcv-in").forEach((el) =>
     el.addEventListener("input", (e) => {
       const i = Number(e.target.dataset.i);
       state.items[i].rcv = Number(e.target.value) || 0;
+      refreshPwiCell(i); // a struck line's PWI column mirrors its RCV
       refreshAcvCell(i);
     })
   );
-  body.querySelectorAll(".dep-in").forEach((el) =>
+  body.querySelectorAll(".rec-in").forEach((el) =>
     el.addEventListener("input", (e) => {
       const i = Number(e.target.dataset.i);
-      state.items[i].depreciation = Number(e.target.value) || 0;
+      state.items[i].recoverableDep = Math.max(0, Number(e.target.value) || 0);
       refreshAcvCell(i);
     })
   );
@@ -556,6 +592,7 @@ function renderReview() {
     el.addEventListener("input", (e) => {
       const i = Number(e.target.dataset.i);
       state.items[i].nonRecoverableDep = Math.max(0, Number(e.target.value) || 0);
+      refreshAcvCell(i);
     })
   );
 
@@ -589,20 +626,24 @@ function groupByTrade(items) {
   const extras = [...byTrade.keys()].filter((t) => !TRADE_ORDER.includes(t)).sort();
   return [...ordered, ...extras].map((t) => {
     const its = byTrade.get(t);
-    let rcv = 0, dep = 0, nonRecDep = 0, acv = 0;
+    let rcv = 0, recDep = 0, nonRecDep = 0, pwi = 0, acv = 0;
     for (const it of its) {
       const r = Number(it.rcv) || 0;
-      const d = Number(it.depreciation) || 0;
+      const rec = Number(it.recoverableDep) || 0;
+      const nr = Number(it.nonRecoverableDep) || 0;
+      const p = it.paidWhenIncurred ? r : 0; // carve-out amount is the line's own RCV
       rcv += r;
-      dep += d;
-      acv += r - d; // ACV = RCV − Depreciation
-      nonRecDep += Number(it.nonRecoverableDep) || 0;
+      recDep += rec;
+      nonRecDep += nr;
+      pwi += p;
+      acv += r - rec - nr; // sum of line ACVs; PWI carve-out subtracted once below
     }
+    acv -= pwi; // trade ACV excludes paid-when-incurred lines (paid at actuals)
     return {
       trade: t,
       color: TRADE_COLORS[t] || "#94a3b8",
       items: [...its].sort((x, y) => compareLineNumbers(x.displayNumber, y.displayNumber)),
-      rcv, dep, nonRecDep, acv,
+      rcv, recDep, nonRecDep, pwi, acv,
     };
   });
 }
@@ -613,8 +654,11 @@ function renderDoc() {
   const groups = groupByTrade(items);
 
   const totals = groups.reduce(
-    (a, g) => { a.rcv += g.rcv; a.dep += g.dep; a.nonRecDep += g.nonRecDep; a.acv += g.acv; return a; },
-    { rcv: 0, dep: 0, nonRecDep: 0, acv: 0 }
+    (a, g) => {
+      a.rcv += g.rcv; a.recDep += g.recDep; a.nonRecDep += g.nonRecDep; a.pwi += g.pwi; a.acv += g.acv;
+      return a;
+    },
+    { rcv: 0, recDep: 0, nonRecDep: 0, pwi: 0, acv: 0 }
   );
   const totalOP = md.totalOP != null ? Number(md.totalOP) : null;
   const totalTax = md.totalTax != null ? Number(md.totalTax) : null;
@@ -634,7 +678,7 @@ function renderDoc() {
   // ---------- PAGE 1: one-page trade summary ----------
   // O&P and Taxes are estimate-wide only: per-trade cells show "—", the Total
   // row carries the estimate totals.
-  const dash = '<span class="dash">—</span>';
+  const dash = dashHTML;
   const summaryRows = groups
     .map(
       (g) => `
@@ -643,7 +687,8 @@ function renderDoc() {
         <td>${dash}</td>
         <td>${dash}</td>
         <td>${fmtUSD(g.rcv)}</td>
-        <td>${fmtUSD(g.dep)}</td>
+        <td>${g.pwi > 0 ? fmtUSD(g.pwi) : dash}</td>
+        <td>${fmtUSD(g.recDep)}</td>
         <td>${fmtUSD(g.nonRecDep)}</td>
         <td>${fmtUSD(g.acv)}</td>
       </tr>`
@@ -666,7 +711,7 @@ function renderDoc() {
       <table class="summary">
         <thead><tr>
           <th class="left">Trade</th><th>O&amp;P</th><th>Taxes</th>
-          <th>RCV</th><th>Depreciation</th><th>Non-Rec. Dep.</th><th>ACV</th>
+          <th>RCV</th><th>Paid When Incurred</th><th>Recoverable Dep.</th><th>Non-Rec. Dep.</th><th>ACV</th>
         </tr></thead>
         <tbody>${summaryRows}</tbody>
         <tfoot><tr>
@@ -674,17 +719,21 @@ function renderDoc() {
           <td>${totalOP != null ? fmtUSD(totalOP) : dash}</td>
           <td>${totalTax != null ? fmtUSD(totalTax) : dash}</td>
           <td>${fmtUSD(totals.rcv)}</td>
-          <td>${fmtUSD(totals.dep)}</td>
+          <td>${totals.pwi > 0 ? fmtUSD(totals.pwi) : dash}</td>
+          <td>${fmtUSD(totals.recDep)}</td>
           <td>${fmtUSD(totals.nonRecDep)}</td>
           <td>${fmtUSD(totals.acv)}</td>
         </tr></tfoot>
       </table>
 
       <p class="footnote">
-        <strong>RCV − Depreciation = ACV.</strong> O&amp;P and Taxes are estimate-wide (RCV already
-        includes them) and are not split per trade, so per-trade cells show “—” and the estimate totals
-        appear in the Total row. Non-Recoverable Depreciation is the portion insurance will not reimburse
-        and is a subset of Depreciation.
+        <strong>RCV − Paid When Incurred − Recoverable Dep − Non-Recoverable Dep = ACV.</strong>
+        Recoverable and Non-Recoverable Depreciation are separate, non-overlapping buckets that
+        together make up a line's total depreciation. Paid-When-Incurred lines (struck through in the
+        claim — e.g. deferred debris removal) are paid at actuals and carved out of ACV: each such line
+        still shows its full RCV as its own ACV, but is excluded from the trade and Total ACV. O&amp;P
+        and Taxes are estimate-wide (RCV already includes them) and are not split per trade, so per-trade
+        cells show “—” and the estimate totals appear in the Total row.
       </p>
     </section>`;
 
@@ -693,17 +742,22 @@ function renderDoc() {
       .map((g) => {
         const rows = g.items
           .map((it) => {
+            const recAmt = Number(it.recoverableDep) || 0;
             const nrAmt = Number(it.nonRecoverableDep) || 0;
-            const nr = nrAmt > 0 ? '<span class="nr-tag">NON-REC</span>' : "";
+            const rcv = Number(it.rcv) || 0;
+            const tag = it.paidWhenIncurred
+              ? '<span class="pwi-tag">PAID WHEN INCURRED</span>'
+              : nrAmt > 0 ? '<span class="nr-tag">NON-REC</span>' : "";
             return `
-            <tr>
+            <tr${it.paidWhenIncurred ? ' class="pwi-row"' : ""}>
               <td class="num">${esc(it.displayNumber)}</td>
-              <td class="left desc">${esc(it.description)}${nr}</td>
+              <td class="left desc">${esc(it.description)}${tag}</td>
               <td class="left">${esc(it.quantity)}</td>
-              <td>${fmtUSD(it.rcv)}</td>
-              <td>${fmtUSD(it.depreciation)}</td>
+              <td>${fmtUSD(rcv)}</td>
+              <td>${it.paidWhenIncurred ? fmtUSD(rcv) : dash}</td>
+              <td>${recAmt > 0 ? fmtUSD(recAmt) : dash}</td>
               <td>${nrAmt > 0 ? fmtUSD(nrAmt) : dash}</td>
-              <td>${fmtUSD((Number(it.rcv) || 0) - (Number(it.depreciation) || 0))}</td>
+              <td>${fmtUSD(rcv - recAmt - nrAmt)}</td>
             </tr>`;
           })
           .join("");
@@ -713,19 +767,20 @@ function renderDoc() {
             <div class="trade-page-title"><span class="bar" style="background:${g.color}"></span><h2>${esc(g.trade)}</h2></div>
             <div class="trade-page-totals">
               <div class="tpt"><div class="k">RCV</div><div class="v">${fmtUSD(g.rcv)}</div></div>
-              <div class="tpt"><div class="k">Depreciation</div><div class="v">${fmtUSD(g.dep)}</div></div>
+              ${g.pwi > 0 ? `<div class="tpt"><div class="k">Paid When Incurred</div><div class="v">${fmtUSD(g.pwi)}</div></div>` : ""}
+              <div class="tpt"><div class="k">Recoverable Dep.</div><div class="v">${fmtUSD(g.recDep)}</div></div>
               <div class="tpt"><div class="k">ACV</div><div class="v">${fmtUSD(g.acv)}</div></div>
             </div>
           </div>
           <table class="lines">
             <thead><tr>
               <th class="left">Line&nbsp;#</th><th class="left">Description</th><th class="left">Quantity</th>
-              <th>RCV</th><th>Depreciation</th><th>Non-Rec. Dep.</th><th>ACV</th>
+              <th>RCV</th><th>Paid When Incurred</th><th>Recoverable Dep.</th><th>Non-Rec. Dep.</th><th>ACV</th>
             </tr></thead>
             <tbody>${rows}</tbody>
             <tfoot><tr>
               <td class="left" colspan="3">${esc(g.trade)} total (${g.items.length} line${g.items.length === 1 ? "" : "s"})</td>
-              <td>${fmtUSD(g.rcv)}</td><td>${fmtUSD(g.dep)}</td><td>${fmtUSD(g.nonRecDep)}</td><td>${fmtUSD(g.acv)}</td>
+              <td>${fmtUSD(g.rcv)}</td><td>${g.pwi > 0 ? fmtUSD(g.pwi) : dash}</td><td>${fmtUSD(g.recDep)}</td><td>${fmtUSD(g.nonRecDep)}</td><td>${fmtUSD(g.acv)}</td>
             </tr></tfoot>
           </table>
         </section>`;
@@ -755,17 +810,21 @@ async function loadSample() {
     const group = data.final || data.initial || data;
     const src = group.items || [];
     const items = src.map((it) => {
-      const depreciation = Number(it.depreciation) || 0;
       const rcv = Number(it.rcv) || 0;
+      const dep = Number(it.depreciation) || 0;
+      // Sample data carries a trusted per-line type (no undetermined-split case here).
+      const nonRecoverableDep = it.depreciationType === "non-recoverable" ? dep : 0;
+      const recoverableDep = dep - nonRecoverableDep;
       return {
         number: it.number != null ? String(it.number) : "",
         section: it.section || "",
         description: it.description || "",
         quantity: it.quantity || "",
         rcv,
-        depreciation,
-        nonRecoverableDep: it.depreciationType === "non-recoverable" ? depreciation : 0,
-        acv: rcv - depreciation,
+        recoverableDep,
+        nonRecoverableDep,
+        paidWhenIncurred: !!it.paidWhenIncurred,
+        acv: rcv - recoverableDep - nonRecoverableDep,
         trade: "Not Categorized", // start uncategorized, like a real parse
       };
     });

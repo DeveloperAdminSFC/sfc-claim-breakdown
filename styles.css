@@ -582,6 +582,26 @@ body {
   vertical-align: middle;
 }
 
+/* Paid-when-incurred: struck through in the source (teal), paid at actuals and carved out
+   of ACV. Mirror the document — mute the row and strike the description so the carve-out is
+   obvious at a glance. The teal echoes the strikethrough color the carrier uses. */
+.pwi-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: #ccfbf1;
+  color: #0f766e;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  vertical-align: middle;
+}
+.pwi-row { color: var(--ink-faint); background: rgba(13, 148, 136, 0.055); }
+.pwi-row .desc { text-decoration: line-through; text-decoration-color: #5eead4; }
+.pwi-cell { color: #0f766e; font-weight: 600; }
+.review-table td.pwi-cell { text-align: right; }
+
 /* ============================ PRINT ============================ */
 @media print {
   @page { size: letter; margin: 0.5in; }
