@@ -599,8 +599,6 @@ body {
 }
 .pwi-row { color: var(--ink-faint); background: rgba(13, 148, 136, 0.055); }
 .pwi-row .desc { text-decoration: line-through; text-decoration-color: #5eead4; }
-.pwi-cell { color: #0f766e; font-weight: 600; }
-.review-table td.pwi-cell { text-align: right; }
 
 /* ============================ PRINT ============================ */
 @media print {
