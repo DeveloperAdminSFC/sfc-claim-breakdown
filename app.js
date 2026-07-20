@@ -72,7 +72,29 @@ const BACKEND_URL = "https://sfc-operational-intelligence-git-101019263046.us-ce
 // The parsed line items for the current claim. Trade is editable in the review
 // table before the summary is built. jobInfo is optional display-only metadata
 // (Job # + Client) linked via the job picker; it does not affect parsing.
-let state = { items: [], summary: {}, jobInfo: null };
+//
+// structures is a purely client-side organizational layer applied AFTER parsing:
+// the physical structures on the claim (House, Shed, Detached Garage). Each is
+// { id, name } — assignment is by stable id, so renaming never touches items.
+// Every line item carries a structureId. Nothing persists (session state only).
+let state = { items: [], summary: {}, jobInfo: null, structures: [], nextStructureNum: 1 };
+
+// Monotonic id source for structures — stable across renames/deletes.
+let structSeq = 0;
+const newStructId = () => "s" + (++structSeq);
+
+// One structure on parse, named "Structure 1", with every line assigned to it.
+function initStructures() {
+  const first = { id: newStructId(), name: "Structure 1" };
+  state.structures = [first];
+  state.nextStructureNum = 2; // next auto-name is "Structure 2"
+  for (const it of state.items) it.structureId = first.id;
+}
+
+// Find a structure by id (falls back to the first structure, which always exists).
+function structureById(id) {
+  return state.structures.find((s) => s.id === id) || state.structures[0];
+}
 
 // ------------------------------ Helpers ---------------------------------- //
 const fmtUSD = (n) =>
@@ -278,6 +300,7 @@ async function parsePdf(file) {
     state.summary = parsed.summary || {};
     // Surface the undetermined split so the user sets the Non-Rec. Dep. column manually.
     state.splitUndetermined = splitUndetermined;
+    initStructures(); // one "Structure 1", every line assigned to it
 
     renderReview();
     setStatus(
@@ -304,6 +327,115 @@ function tradeSelectHTML(selected, idAttr) {
 // A compact numeric input for an editable dollar amount.
 function moneyInput(cls, i, value) {
   return `<input type="number" step="0.01" min="0" inputmode="decimal" class="amt ${cls}" data-i="${i}" value="${Number(value) || 0}" />`;
+}
+
+// ---------------------------- Structures --------------------------------- //
+// Options for a structure <select>: value = stable id, label = user name. The
+// optional "— no change —" sentinel (value "") heads the bulk selects so an Apply
+// can target trade only, structure only, or both.
+function structureOptionsHTML(selectedId, { noChange = false } = {}) {
+  const head = noChange ? `<option value="">— no change —</option>` : "";
+  return head + state.structures
+    .map((s) => `<option value="${esc(s.id)}"${s.id === selectedId ? " selected" : ""}>${esc(s.name)}</option>`)
+    .join("");
+}
+
+// Per-row structure dropdown (mirrors tradeSelectHTML).
+function structureSelectHTML(selectedId, idAttr) {
+  return `<select class="input input-select structure-select" ${idAttr}>${structureOptionsHTML(selectedId)}</select>`;
+}
+
+// Re-emit every structure dropdown after the list changes (add/rename/delete),
+// preserving each row's current selection, and repaint the manager.
+function syncStructures() {
+  const bulk = document.getElementById("bulkStructureSelect");
+  if (bulk) {
+    const keep = bulk.value;
+    bulk.innerHTML = structureOptionsHTML(keep, { noChange: true });
+    if (!state.structures.some((s) => s.id === keep)) bulk.value = ""; // deleted → sentinel
+  }
+  document.querySelectorAll(".structure-select[data-i]").forEach((sel) => {
+    const i = Number(sel.dataset.i);
+    sel.innerHTML = structureOptionsHTML(state.items[i] ? state.items[i].structureId : null);
+  });
+  renderStructureManager();
+}
+
+// The structure manager UI — chips with an inline-editable name + delete, plus Add.
+function renderStructureManager() {
+  const host = document.getElementById("structureManager");
+  if (!host) return;
+  if (!state.items.length) { host.hidden = true; host.innerHTML = ""; return; }
+  const soleStructure = state.structures.length <= 1; // last one can't be deleted
+  const chips = state.structures
+    .map(
+      (s) => `
+      <span class="struct-chip">
+        <input class="struct-name" data-id="${esc(s.id)}" value="${esc(s.name)}"
+          aria-label="Structure name" spellcheck="false" />
+        <button class="struct-del" data-id="${esc(s.id)}" title="Delete structure"
+          aria-label="Delete structure"${soleStructure ? " disabled" : ""}>✕</button>
+      </span>`
+    )
+    .join("");
+  host.innerHTML = `
+    <span class="struct-label">Structures</span>
+    <div class="struct-chips">${chips}</div>
+    <button id="addStructureBtn" class="btn btn-ghost struct-add" type="button">+ Add structure</button>`;
+  host.hidden = false;
+
+  host.querySelectorAll(".struct-name").forEach((inp) =>
+    inp.addEventListener("change", (e) => renameStructure(e.target.dataset.id, e.target.value, e.target))
+  );
+  host.querySelectorAll(".struct-del").forEach((btn) =>
+    btn.addEventListener("click", (e) => deleteStructure(e.currentTarget.dataset.id))
+  );
+  const add = document.getElementById("addStructureBtn");
+  if (add) add.addEventListener("click", addStructure);
+}
+
+function addStructure() {
+  const s = { id: newStructId(), name: "Structure " + state.nextStructureNum++ };
+  state.structures.push(s);
+  syncStructures();
+  setStatus(`Added “${s.name}”.`, "ok");
+}
+
+// Commit a rename or revert it (inputEl restores the prior value on reject). Blocks
+// empty names and case-insensitive duplicates — the summary and dropdowns key on names.
+function renameStructure(id, raw, inputEl) {
+  const s = state.structures.find((x) => x.id === id);
+  if (!s) return;
+  const name = String(raw).trim();
+  if (!name) {
+    if (inputEl) inputEl.value = s.name;
+    return setStatus("Structure name can't be empty.", "error");
+  }
+  if (state.structures.some((x) => x.id !== id && x.name.toLowerCase() === name.toLowerCase())) {
+    if (inputEl) inputEl.value = s.name;
+    return setStatus(`A structure named “${name}” already exists.`, "error");
+  }
+  s.name = name;
+  syncStructures();
+  setStatus(`Renamed to “${name}”.`, "ok");
+}
+
+// Delete a structure (never the last one); its line items fall back to the first
+// remaining structure, reported in the status line.
+function deleteStructure(id) {
+  if (state.structures.length <= 1) return;
+  const removed = state.structures.find((s) => s.id === id);
+  state.structures = state.structures.filter((s) => s.id !== id);
+  const fallback = state.structures[0];
+  const moved = state.items.filter((it) => it.structureId === id);
+  moved.forEach((it) => (it.structureId = fallback.id));
+  syncStructures();
+  const n = moved.length;
+  setStatus(
+    `Deleted “${removed ? removed.name : "structure"}”.` +
+      (n ? ` ${n} line item${n === 1 ? "" : "s"} moved to “${fallback.name}”.` : ""),
+    "ok"
+  );
 }
 
 // Recompute a row's ACV cell live. ACV is the one computed cell and always:
@@ -459,6 +591,7 @@ function resetToEmpty() {
   state.items = [];
   state.summary = {};
   state.splitUndetermined = false;
+  state.structures = [];
   // state.jobInfo intentionally left untouched.
   closeSummaryModal();
   closeDiscrepancyModal();
@@ -557,6 +690,7 @@ function renderReview() {
         <td class="edit-col">${moneyInput("nonrec-in", i, it.nonRecoverableDep)}</td>
         <td class="acv-cell" data-i="${i}">${fmtUSD(it.acv)}</td>
         <td class="left">${tradeSelectHTML(it.trade, `data-i="${i}"`)}</td>
+        <td class="left">${structureSelectHTML(it.structureId, `data-i="${i}"`)}</td>
       </tr>`)
     .join("");
 
@@ -564,6 +698,13 @@ function renderReview() {
   body.querySelectorAll(".trade-select").forEach((sel) =>
     sel.addEventListener("change", (e) => {
       state.items[Number(e.target.dataset.i)].trade = e.target.value;
+    })
+  );
+
+  // Per-row structure selects (value = structure id).
+  body.querySelectorAll(".structure-select").forEach((sel) =>
+    sel.addEventListener("change", (e) => {
+      state.items[Number(e.target.dataset.i)].structureId = e.target.value;
     })
   );
 
@@ -599,11 +740,15 @@ function renderReview() {
     })
   );
 
-  // Populate the bulk trade select once.
+  // Populate the bulk trade select once. A leading "— no change —" sentinel lets an
+  // Apply target structure only (and mirrors the bulk structure select).
   const bulk = document.getElementById("bulkTradeSelect");
   if (!bulk.options.length) {
-    bulk.innerHTML = TRADE_ORDER.map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join("");
+    bulk.innerHTML =
+      `<option value="">— no change —</option>` +
+      TRADE_ORDER.map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join("");
   }
+  syncStructures(); // populate the bulk structure select + per-row selects + manager
   updateSplitBanner();
 
   document.getElementById("review").hidden = false;
@@ -650,38 +795,20 @@ function groupByTrade(items) {
   });
 }
 
-function renderDoc() {
-  const items = state.items;
-  const md = state.summary || {};
-  const groups = groupByTrade(items);
-
-  const totals = groups.reduce(
+// One "Summary by Trade" table: trade rows + a total row. O&P/Taxes are estimate-wide,
+// so per-trade cells always show "—"; they only carry a value on the row where op/tax are
+// passed (the single-structure Total, or the multi-structure Claim Total). showRows:false
+// omits the trade rows — used for the compact Claim Total strip (header + total only).
+function summaryTableHTML(groups, { op = null, tax = null, totalLabel = "Total", showRows = true } = {}) {
+  const dash = dashHTML;
+  const t = groups.reduce(
     (a, g) => {
       a.rcv += g.rcv; a.recDep += g.recDep; a.nonRecDep += g.nonRecDep; a.pwi += g.pwi; a.acv += g.acv;
       return a;
     },
     { rcv: 0, recDep: 0, nonRecDep: 0, pwi: 0, acv: 0 }
   );
-  const totalOP = md.totalOP != null ? Number(md.totalOP) : null;
-  const totalTax = md.totalTax != null ? Number(md.totalTax) : null;
-
-  const job = state.jobInfo;
-  const metaRows = [
-    ["Job #", job && job.job_number != null ? String(job.job_number) : "—"],
-    ["Client", (job && job.contact_name) || "—"],
-    ["Insurance", md.insurance_company || "—"],
-    ["Claim #", md.claim_number || "—"],
-    ["Date of Loss", md.date_of_loss || "—"],
-    ["Deductible", md.deductible != null ? fmtUSD(md.deductible) : "—"],
-    ["Line Items", String(items.length)],
-    ["Printed", new Date().toLocaleDateString("en-US")],
-  ];
-
-  // ---------- PAGE 1: one-page trade summary ----------
-  // O&P and Taxes are estimate-wide only: per-trade cells show "—", the Total
-  // row carries the estimate totals.
-  const dash = dashHTML;
-  const summaryRows = groups
+  const rows = !showRows ? "" : groups
     .map(
       (g) => `
       <tr>
@@ -696,62 +823,39 @@ function renderDoc() {
       </tr>`
     )
     .join("");
-
-  const page1 = `
-    <section class="page">
-      <div class="doc-head">
-        <p class="doc-eyebrow">Insurance Claim · Trade Breakdown</p>
-        <h1 class="doc-title">Claim Summary by Trade</h1>
-        <p class="doc-sub">${esc(md.insurance_company || "")}${md.insurance_company && md.date_of_loss ? " · " : ""}${md.date_of_loss ? "Loss dated " + esc(md.date_of_loss) : ""}</p>
-      </div>
-
-      <div class="meta-grid">
-        ${metaRows.map(([k, v]) => `<div class="meta-item"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`).join("")}
-      </div>
-
-      <p class="section-label">Summary by Trade</p>
+  return `
       <table class="summary">
         <thead><tr>
           <th class="left">Trade</th><th>O&amp;P</th><th>Taxes</th>
           <th>RCV</th><th>Paid When Incurred</th><th>Recoverable Dep.</th><th>Non-Rec. Dep.</th><th>ACV</th>
         </tr></thead>
-        <tbody>${summaryRows}</tbody>
+        <tbody>${rows}</tbody>
         <tfoot><tr>
-          <td class="left">Total</td>
-          <td>${totalOP != null ? fmtUSD(totalOP) : dash}</td>
-          <td>${totalTax != null ? fmtUSD(totalTax) : dash}</td>
-          <td>${fmtUSD(totals.rcv)}</td>
-          <td>${totals.pwi > 0 ? fmtUSD(totals.pwi) : dash}</td>
-          <td>${fmtUSD(totals.recDep)}</td>
-          <td>${fmtUSD(totals.nonRecDep)}</td>
-          <td>${fmtUSD(totals.acv)}</td>
+          <td class="left">${esc(totalLabel)}</td>
+          <td>${op != null ? fmtUSD(op) : dash}</td>
+          <td>${tax != null ? fmtUSD(tax) : dash}</td>
+          <td>${fmtUSD(t.rcv)}</td>
+          <td>${t.pwi > 0 ? fmtUSD(t.pwi) : dash}</td>
+          <td>${fmtUSD(t.recDep)}</td>
+          <td>${fmtUSD(t.nonRecDep)}</td>
+          <td>${fmtUSD(t.acv)}</td>
         </tr></tfoot>
-      </table>
+      </table>`;
+}
 
-      <p class="footnote">
-        <strong>RCV − Paid When Incurred − Recoverable Dep − Non-Recoverable Dep = ACV.</strong>
-        Recoverable and Non-Recoverable Depreciation are separate, non-overlapping buckets that
-        together make up a line's total depreciation. Paid-When-Incurred (struck through in the claim —
-        e.g. deferred debris removal) is paid at actuals and subtracted from ACV by the same formula,
-        so a fully paid-when-incurred line nets to $0.00 ACV and drops out of the trade and Total ACV.
-        O&amp;P and Taxes are estimate-wide (RCV already includes them) and are not split per trade, so
-        per-trade cells show “—” and the estimate totals appear in the Total row.
-      </p>
-    </section>`;
-
-  // ---------- Detail pages: one per trade (always generated) ----------
-  const detailPages = groups
-      .map((g) => {
-        const rows = g.items
-          .map((it) => {
-            const recAmt = Number(it.recoverableDep) || 0;
-            const nrAmt = Number(it.nonRecoverableDep) || 0;
-            const rcv = Number(it.rcv) || 0;
-            const pwiAmt = Number(it.paidWhenIncurred) || 0;
-            const tag = pwiAmt > 0
-              ? '<span class="pwi-tag">PAID WHEN INCURRED</span>'
-              : nrAmt > 0 ? '<span class="nr-tag">NON-REC</span>' : "";
-            return `
+// One per-trade detail page (its own printable .page).
+function tradeDetailPageHTML(g) {
+  const dash = dashHTML;
+  const rows = g.items
+    .map((it) => {
+      const recAmt = Number(it.recoverableDep) || 0;
+      const nrAmt = Number(it.nonRecoverableDep) || 0;
+      const rcv = Number(it.rcv) || 0;
+      const pwiAmt = Number(it.paidWhenIncurred) || 0;
+      const tag = pwiAmt > 0
+        ? '<span class="pwi-tag">PAID WHEN INCURRED</span>'
+        : nrAmt > 0 ? '<span class="nr-tag">NON-REC</span>' : "";
+      return `
             <tr${pwiAmt > 0 ? ' class="pwi-row"' : ""}>
               <td class="num">${esc(it.displayNumber)}</td>
               <td class="left desc">${esc(it.description)}${tag}</td>
@@ -762,9 +866,9 @@ function renderDoc() {
               <td>${nrAmt > 0 ? fmtUSD(nrAmt) : dash}</td>
               <td>${fmtUSD(rcv - pwiAmt - recAmt - nrAmt)}</td>
             </tr>`;
-          })
-          .join("");
-        return `
+    })
+    .join("");
+  return `
         <section class="page">
           <div class="trade-page-head">
             <div class="trade-page-title"><span class="bar" style="background:${g.color}"></span><h2>${esc(g.trade)}</h2></div>
@@ -787,8 +891,102 @@ function renderDoc() {
             </tr></tfoot>
           </table>
         </section>`;
+}
+
+function renderDoc() {
+  const items = state.items;
+  const md = state.summary || {};
+
+  const totalOP = md.totalOP != null ? Number(md.totalOP) : null;
+  const totalTax = md.totalTax != null ? Number(md.totalTax) : null;
+
+  // Structures that actually have lines. When ≤1, render exactly as before — no headings,
+  // no Claim Total, no divider pages (don't add ceremony for a single structure).
+  const usedStructures = (state.structures || []).filter((s) => items.some((it) => it.structureId === s.id));
+  const multi = usedStructures.length > 1;
+
+  const job = state.jobInfo;
+  const metaRows = [
+    ["Job #", job && job.job_number != null ? String(job.job_number) : "—"],
+    ["Client", (job && job.contact_name) || "—"],
+    ["Insurance", md.insurance_company || "—"],
+    ["Claim #", md.claim_number || "—"],
+    ["Date of Loss", md.date_of_loss || "—"],
+    ["Deductible", md.deductible != null ? fmtUSD(md.deductible) : "—"],
+    ["Line Items", String(items.length)],
+    ["Printed", new Date().toLocaleDateString("en-US")],
+  ];
+
+  // ---------- PAGE 1: trade summary (one section per structure when >1) ----------
+  // O&P and Taxes are estimate-wide, so they appear only on the single-structure Total
+  // row or the multi-structure Claim Total row; per-structure tables show "—".
+  let summaryBody;
+  if (!multi) {
+    summaryBody =
+      `<p class="section-label">Summary by Trade</p>` +
+      summaryTableHTML(groupByTrade(items), { op: totalOP, tax: totalTax });
+  } else {
+    const sections = usedStructures
+      .map((s) => {
+        const its = items.filter((it) => it.structureId === s.id);
+        return (
+          `<div class="struct-summary-head">${esc(s.name)}</div>` +
+          `<p class="section-label">Summary by Trade</p>` +
+          summaryTableHTML(groupByTrade(its), { op: null, tax: null })
+        );
       })
       .join("");
+    const claimTotal =
+      `<div class="struct-summary-head claim-total-head">Claim Total</div>` +
+      summaryTableHTML(groupByTrade(items), {
+        op: totalOP, tax: totalTax, totalLabel: "Claim Total", showRows: false,
+      });
+    summaryBody = sections + claimTotal;
+  }
+
+  const page1 = `
+    <section class="page">
+      <div class="doc-head">
+        <p class="doc-eyebrow">Insurance Claim · Trade Breakdown</p>
+        <h1 class="doc-title">Claim Summary by Trade</h1>
+        <p class="doc-sub">${esc(md.insurance_company || "")}${md.insurance_company && md.date_of_loss ? " · " : ""}${md.date_of_loss ? "Loss dated " + esc(md.date_of_loss) : ""}</p>
+      </div>
+
+      <div class="meta-grid">
+        ${metaRows.map(([k, v]) => `<div class="meta-item"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`).join("")}
+      </div>
+
+      ${summaryBody}
+
+      <p class="footnote">
+        <strong>RCV − Paid When Incurred − Recoverable Dep − Non-Recoverable Dep = ACV.</strong>
+        Recoverable and Non-Recoverable Depreciation are separate, non-overlapping buckets that
+        together make up a line's total depreciation. Paid-When-Incurred (struck through in the claim —
+        e.g. deferred debris removal) is paid at actuals and subtracted from ACV by the same formula,
+        so a fully paid-when-incurred line nets to $0.00 ACV and drops out of ACV.
+        O&amp;P and Taxes are estimate-wide (RCV already includes them) and are not split per trade or
+        structure, so those cells show “—” and the estimate totals appear on the ${multi ? "Claim Total" : "Total"} row.
+      </p>
+    </section>`;
+
+  // ---------- Detail pages: one per trade, grouped under a structure divider when >1 ----------
+  let detailPages;
+  if (!multi) {
+    detailPages = groupByTrade(items).map(tradeDetailPageHTML).join("");
+  } else {
+    detailPages = usedStructures
+      .map((s) => {
+        const its = items.filter((it) => it.structureId === s.id);
+        const divider = `
+        <section class="page structure-divider">
+          <p class="sd-eyebrow">Structure</p>
+          <h2 class="sd-name">${esc(s.name)}</h2>
+          <p class="sd-sub">Line Item Breakdowns by Trade</p>
+        </section>`;
+        return divider + groupByTrade(its).map(tradeDetailPageHTML).join("");
+      })
+      .join("");
+  }
 
   const docEl = document.getElementById("doc");
   docEl.innerHTML = page1 + detailPages;
@@ -850,6 +1048,7 @@ async function loadSample() {
       totalTax: m.total_tax != null ? m.total_tax : (sumTax || null),
     };
     state.splitUndetermined = false;
+    initStructures(); // one "Structure 1", every line assigned to it
     renderReview();
     setStatus(`Loaded sample: ${items.length} line items. All start “Not Categorized” — select and assign trades, then Build summary.`, "ok");
   } catch {
@@ -882,13 +1081,19 @@ function init() {
     showDiscrepancyModal(rows);
   });
 
-  // Apply the chosen trade to the lines named in the range field (the single bulk path).
+  // Apply the chosen trade and/or structure to the lines named in the range field. One
+  // button, one range; each dropdown has a "— no change —" sentinel (value ""), so the
+  // user can change trade only, structure only, or both in a single action.
   document.getElementById("applyLinesBtn").addEventListener("click", () => {
-    const t = document.getElementById("bulkTradeSelect").value;
+    const t = document.getElementById("bulkTradeSelect").value; // "" = no change
+    const sid = document.getElementById("bulkStructureSelect").value; // "" = no change
+    if (!t && !sid) {
+      return setStatus("Pick a trade or structure to apply.", "error");
+    }
     const rangeEl = document.getElementById("rangeInput");
     const rangeStr = rangeEl.value.trim();
     if (!rangeStr) {
-      return setStatus("Type a line-number range (e.g. 1-5, 7, C1-C3) to apply a trade.", "error");
+      return setStatus("Type a line-number range (e.g. 1-5, 7, C1-C3) to apply.", "error");
     }
 
     const { wanted, bad } = parseLineRange(rangeStr, state.items);
@@ -903,14 +1108,25 @@ function init() {
     }
 
     targetIndexes.forEach((i) => {
-      state.items[i].trade = t;
-      const sel = document.querySelector(`.trade-select[data-i="${i}"]`);
-      if (sel) sel.value = t;
+      if (t) {
+        state.items[i].trade = t;
+        const sel = document.querySelector(`.trade-select[data-i="${i}"]`);
+        if (sel) sel.value = t;
+      }
+      if (sid) {
+        state.items[i].structureId = sid;
+        const sel = document.querySelector(`.structure-select[data-i="${i}"]`);
+        if (sel) sel.value = sid;
+      }
     });
 
+    const parts = [];
+    if (t) parts.push(t);
+    if (sid) parts.push(`“${structureById(sid).name}”`);
+    const n = targetIndexes.length;
     rangeEl.value = ""; // clear for the next entry
     setStatus(
-      `Set ${targetIndexes.length} line item${targetIndexes.length === 1 ? "" : "s"} to ${t}.${badNote}`,
+      `Set ${n} line item${n === 1 ? "" : "s"} to ${parts.join(" · ")}.${badNote}`,
       bad.length ? "error" : "ok"
     );
   });

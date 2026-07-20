@@ -30,15 +30,18 @@
   <!-- ============= REVIEW / CATEGORIZE (screen only, not printed) ============= -->
   <section id="review" class="review" hidden>
     <div class="review-head">
-      <p class="review-eyebrow">Step 2 · Categorize by trade</p>
-      <h2 class="review-title">Assign each line item to a trade, then build the summary.</h2>
+      <p class="review-eyebrow">Step 2 · Categorize by trade &amp; structure</p>
+      <h2 class="review-title">Assign each line item to a trade and structure, then build the summary.</h2>
     </div>
+    <!-- Structure manager: define the structures on the claim (House, Shed, …). Populated by app.js. -->
+    <section id="structureManager" class="structure-manager" hidden></section>
     <div id="splitBanner" class="banner banner-warn" hidden></div>
     <div class="review-table-wrap">
       <div class="review-actions">
         <input id="rangeInput" class="input range-input" type="text" autocomplete="off"
           spellcheck="false" placeholder="e.g. 1-5, 7, C1-C3" title="Line numbers to apply the trade to" />
-        <select id="bulkTradeSelect" class="input input-select"></select>
+        <select id="bulkTradeSelect" class="input input-select" title="Trade to apply"></select>
+        <select id="bulkStructureSelect" class="input input-select" title="Structure to apply"></select>
         <button id="applyLinesBtn" class="btn">Apply to lines</button>
         <button id="buildBtn" class="btn btn-primary">Build summary ↓</button>
       </div>
@@ -54,6 +57,7 @@
             <th class="edit-col">Non-Rec. Dep.</th>
             <th>ACV</th>
             <th class="left">Trade</th>
+            <th class="left">Structure</th>
           </tr>
         </thead>
         <tbody id="reviewBody"></tbody>
