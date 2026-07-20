@@ -604,37 +604,53 @@ function resetToEmpty() {
   syncJobUI();              // repaint preserved Job # + "✓ <name>" in the empty picker
 }
 
-// Stamp every item with a `displayNumber` = section prefix + raw line number. Line numbers
-// restart per estimate section in many claims (Structure 1..N, then Contents 1..M), so without a
-// prefix the same number collides across sections and can't be addressed unambiguously.
+// Stamp every item with a `displayNumber`. Prefixes exist ONLY to disambiguate line numbers
+// that are REUSED across sections (LITKE: Contents restarts at 1 after Structure 1..48 → C1…).
+// Many carriers number CONTINUOUSLY across sections (Xactimate panel estimates: 1..32 over 7
+// sections) — those get NO prefixes at all; every displayNumber is the raw printed number.
 //
-// Prefix scheme (predictable — you can work out any section's prefix by hand):
-//   • Sections are handled in the order they first appear in the item list.
-//   • The FIRST section gets NO prefix — its lines display as 1, 2, 3…
-//   • Each later section gets prefix = first alphanumeric char of its name, uppercased
-//     (Contents → "C" → C1, C2…).
-//   • De-collision: if that letter was already taken by an earlier prefixed section, the count of
-//     sections sharing that letter is appended, starting at 2 (a second "C" section → "C2").
-//   • Items whose section is "" (unlabeled) belong to the first section.
+// Rules (predictable — you can work out any section's prefix by hand):
+//   • Sections are handled in first-appearance order; items whose section is "" (unlabeled)
+//     belong to the first section. The first section is never prefixed.
+//   • A later section is prefixed ONLY if one of its raw numbers already appeared in an
+//     EARLIER section. Unique-everywhere numbering → zero prefixes.
+//   • Prefixes are LETTERS ONLY — a digit-bearing prefix (the old "G2") can compose ambiguous
+//     or genuinely colliding displayNumbers ("G2"+"16" === "G"+"216"). Candidates, first
+//     unused wins: first letter of the section name → first letters of its first two words
+//     ("Garage Gutters" → "GG") → first letter + "B", "C", …
 function assignDisplayNumbers(items) {
-  const prefixBySection = new Map(); // section name -> prefix string
-  const baseCount = new Map();       // base letter -> how many prefixed sections have used it
-  let sectionIndex = 0;
+  // Pass 1: group items by section in first-appearance order.
+  const order = [];
+  const bySection = new Map(); // section name -> its items
   for (const it of items) {
-    const section = it.section || "";
-    if (!prefixBySection.has(section)) {
-      sectionIndex += 1;
-      let prefix = "";
-      if (sectionIndex > 1) {
-        const m = String(section).match(/[A-Za-z0-9]/);
-        const base = (m ? m[0] : String(sectionIndex)).toUpperCase();
-        const n = (baseCount.get(base) || 0) + 1;
-        baseCount.set(base, n);
-        prefix = n === 1 ? base : base + n;
-      }
-      prefixBySection.set(section, prefix);
+    const s = it.section || "";
+    if (!bySection.has(s)) {
+      bySection.set(s, []);
+      order.push(s);
     }
-    it.sectionPrefix = prefixBySection.get(section);
+    bySection.get(s).push(it);
+  }
+  // Pass 2: prefix only colliding sections.
+  const prefixBySection = new Map();
+  const used = new Set(); // prefixes already assigned
+  const seen = new Set(); // raw numbers (uppercased) from all earlier sections
+  for (const s of order) {
+    const nums = bySection.get(s).map((it) => String(it.number).toUpperCase());
+    let prefix = "";
+    if (nums.some((n) => seen.has(n))) {
+      const words = String(s).split(/[^A-Za-z]+/).filter(Boolean);
+      const first = ((words[0] || "S")[0] || "S").toUpperCase();
+      const candidates = [first];
+      if (words.length > 1) candidates.push(first + words[1][0].toUpperCase());
+      for (let c = 66; c <= 90; c++) candidates.push(first + String.fromCharCode(c)); // B..Z
+      prefix = candidates.find((p) => !used.has(p)) || first + "Z";
+      used.add(prefix);
+    }
+    prefixBySection.set(s, prefix);
+    for (const n of nums) seen.add(n);
+  }
+  for (const it of items) {
+    it.sectionPrefix = prefixBySection.get(it.section || "");
     it.displayNumber = it.sectionPrefix + String(it.number);
   }
   return items;

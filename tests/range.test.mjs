@@ -54,10 +54,51 @@ const range = (str) => {
 const sorted = (set) => [...set].sort();
 
 // ---- Display-number sanity (prefix scheme) ---- //
-t("displayNumbers: unprefixed first section, C-prefix for Contents", () => {
+t("displayNumbers: unprefixed first section, C-prefix for Contents (real collision)", () => {
   assert.equal(items[0].displayNumber, "1");
   assert.equal(items.find((i) => i.number === "21b").displayNumber, "21b");
   assert.equal(items[items.length - 1].displayNumber, "C10");
+});
+
+t("continuous numbering across many sections → NO prefixes at all (Levi King shape)", () => {
+  // 7 sections, numbers 1..32 continuous document-wide — unique everywhere.
+  const sections = [
+    ["Dwelling Roof", 1, 13], ["Gutter/Downspout - Back Elevation", 14, 15],
+    ["Garage Roof", 16, 21], ["Garage Gutters", 22, 22], ["Siding", 23, 28],
+    ["Debris Removal", 29, 30], ["Labor Minimums Applied", 31, 32],
+  ];
+  const levi = [];
+  for (const [sec, lo, hi] of sections)
+    for (let n = lo; n <= hi; n++) levi.push({ number: String(n), section: sec });
+  assignDisplayNumbers(levi);
+  assert.ok(levi.every((it) => it.displayNumber === String(it.number)), "raw numbers, no prefixes");
+  assert.ok(levi.every((it) => it.sectionPrefix === ""));
+  // Ranges work plain across section boundaries (keys are the raw global numbers).
+  const { wanted, bad } = parseLineRange("16-21", levi);
+  assert.equal(bad.length, 0);
+  assert.equal(new Set(wanted).size, 6);
+});
+
+t("only colliding sections get prefixes; prefixes are letters-only", () => {
+  const fx = [];
+  const add = (sec, lo, hi) => { for (let n = lo; n <= hi; n++) fx.push({ number: String(n), section: sec }); };
+  add("Dwelling Roof", 1, 5);
+  add("Garage Roof", 1, 3);      // collides with 1-5 → prefixed
+  add("Garage Gutters", 1, 2);   // collides → prefixed, distinct from Garage Roof
+  add("Siding", 6, 7);           // 6-7 unseen → NOT prefixed
+  assignDisplayNumbers(fx);
+  const pfx = (sec) => fx.find((i) => i.section === sec).sectionPrefix;
+  assert.equal(pfx("Dwelling Roof"), "");
+  assert.equal(pfx("Siding"), "");
+  assert.equal(pfx("Garage Roof"), "G");
+  assert.equal(pfx("Garage Gutters"), "GG"); // second G-section → two-letter, never "G2"
+  assert.ok(fx.every((i) => /^[A-Z]*$/.test(i.sectionPrefix)), "letters-only prefixes");
+  const dns = fx.map((i) => i.displayNumber);
+  assert.equal(new Set(dns).size, dns.length, "displayNumbers unique");
+  // Prefixed ranges still index-walk: "G1-GG2" spans Garage Roof + Garage Gutters.
+  const { wanted, bad } = parseLineRange("G1-GG2", fx);
+  assert.equal(bad.length, 0);
+  assert.equal(wanted.size, 5);
 });
 
 // ---- Cross-section document-order ranges ---- //
