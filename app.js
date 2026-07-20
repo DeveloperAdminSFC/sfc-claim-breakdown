@@ -640,38 +640,53 @@ function assignDisplayNumbers(items) {
   return items;
 }
 
-// Parse a line-range string ("1-5, 7, C1-C3, 21b") against the items' displayNumbers.
+// Parse a line-range string ("1-5, 7, C1-C3, 21b, 40-C10") against the items' displayNumbers.
 // Returns { wanted, bad }:
 //   • wanted — Set of matched displayNumbers.
-//   • bad    — array of tokens that were malformed (a range with mismatched prefixes like
-//              "C1-9" / "1-C5", or otherwise unparseable) so the caller can name them.
-// Each comma token is a single ref (optional letter prefix + digits, or an exact displayNumber
-// like "21b") or a same-prefix range <prefix><lo>-<prefix><hi>; case-insensitive; a prefixed
-// range expands only within its own prefix. A single ref that simply isn't present is ignored
-// (it may reference a filtered/nonexistent line) — only structurally broken tokens are "bad".
+//   • bad    — array of tokens (verbatim, as typed) that failed: a malformed range, a range
+//              endpoint that names no line, or a single ref that names no line.
+// Semantics per comma token (case-insensitive):
+//   • Plain-numeric range — both endpoints all digits ("3-7", "1-999"): numeric expansion over
+//     the UNPREFIXED section, clamped to lines that exist. Missing endpoints/interior are fine
+//     ("1-999" is the catch-all for every unprefixed line); never flagged bad.
+//   • Any other range ("40-C10", "C2-C5", "21-21b"): BOTH endpoints must name existing lines
+//     (exact displayNumber match); the token expands to every line BETWEEN them in DOCUMENT
+//     ORDER, crossing section boundaries — "40-C10" is 40..48 then C1..C10. Reversed endpoints
+//     swap ("C5-40" ≡ "40-C5"). An endpoint that names no line makes the whole token bad.
+//   • Single ref ("7", "C2", "21b"): added if present; named bad if not.
 function parseLineRange(str, items) {
-  const present = new Map(); // UPPERCASE displayNumber -> actual displayNumber
-  for (const it of items) present.set(String(it.displayNumber).toUpperCase(), String(it.displayNumber));
+  const indexByKey = new Map(); // UPPERCASE displayNumber -> index in document order
+  items.forEach((it, i) => indexByKey.set(String(it.displayNumber).toUpperCase(), i));
+  const dn = (i) => String(items[i].displayNumber);
   const wanted = new Set();
   const bad = [];
   for (const raw of String(str).split(",")) {
     const token = raw.trim();
     if (!token) continue;
     const U = token.toUpperCase();
-    if (U.includes("-")) {
-      const rng = U.match(/^([A-Z]*)(\d+)\s*-\s*([A-Z]*)(\d+)$/);
-      if (!rng || rng[1] !== rng[3]) { bad.push(token); continue; } // malformed / mismatched prefixes
-      const prefix = rng[1];
-      let lo = parseInt(rng[2], 10), hi = parseInt(rng[4], 10);
+    const numRng = U.match(/^(\d+)\s*-\s*(\d+)$/);
+    if (numRng) {
+      // Plain-numeric range: clamp-to-existing over the unprefixed section.
+      let lo = parseInt(numRng[1], 10), hi = parseInt(numRng[2], 10);
       if (lo > hi) [lo, hi] = [hi, lo];
       for (let n = lo; n <= hi; n++) {
-        const key = (prefix + n).toUpperCase();
-        if (present.has(key)) wanted.add(present.get(key));
+        const i = indexByKey.get(String(n));
+        if (i !== undefined) wanted.add(dn(i));
       }
-    } else if (present.has(U)) {
-      wanted.add(present.get(U));
+      continue;
     }
-    // else: a single token that isn't present — ignored quietly, as before.
+    const rng = U.match(/^(.+?)\s*-\s*(.+)$/);
+    if (rng) {
+      // Document-order range: both endpoints must exist.
+      const a = indexByKey.get(rng[1]), b = indexByKey.get(rng[2]);
+      if (a === undefined || b === undefined) { bad.push(token); continue; }
+      const [lo, hi] = a <= b ? [a, b] : [b, a];
+      for (let i = lo; i <= hi; i++) wanted.add(dn(i));
+      continue;
+    }
+    const i = indexByKey.get(U);
+    if (i !== undefined) wanted.add(dn(i));
+    else bad.push(token); // a single ref naming no line — same feedback as a bad endpoint
   }
   return { wanted, bad };
 }
@@ -843,10 +858,108 @@ function summaryTableHTML(groups, { op = null, tax = null, totalLabel = "Total",
       </table>`;
 }
 
-// One per-trade detail page (its own printable .page).
-function tradeDetailPageHTML(g) {
+// ---------------------- Trade detail pagination --------------------------- //
+// The divider pages advertise real printed page ranges, so every .page section MUST render
+// as exactly one sheet — a long trade is split into multiple .page sections instead of
+// spilling. A fixed row-count cap can't do that honestly: measured rows run 31px (one line)
+// to ~96px (wrapped description), so 21 tall rows overflow a sheet that fits 26 short ones.
+// Instead each trade's rows are probe-rendered at the exact print content width (7.5in —
+// which the screen .page now shares, so measured heights transfer 1:1) and packed into
+// pages by their real heights.
+
+// Printable height of a letter sheet in CSS px: 11in − 2×0.5in @page margins = 10in, minus
+// the .page print bottom padding (0.2in).
+const PRINT_USABLE_PX = (10 - 0.2) * 96; // 940.8
+// Safety slack per page: a chunk re-renders with a subset of rows, so auto table-layout can
+// redistribute columns slightly and re-wrap one description (±1 line ≈ 17px). 40px absorbs
+// two such shifts before a row could cross onto the next sheet.
+const PAGE_SLACK = 40;
+
+// Pack row heights (px) into consecutive chunks, each chunk's budget supplied per chunk
+// index (first page has a taller header than "(cont.)" pages). A row taller than its whole
+// budget gets a page of its own. Pure — unit-tested by the node harness.
+function packRowsByHeight(rowHeights, budgetForChunk) {
+  const chunks = [];
+  let cur = [], used = 0;
+  for (let i = 0; i < rowHeights.length; i++) {
+    const h = rowHeights[i];
+    if (cur.length && used + h > budgetForChunk(chunks.length)) {
+      chunks.push(cur);
+      cur = [];
+      used = 0;
+    }
+    cur.push(i);
+    used += h;
+  }
+  if (cur.length) chunks.push(cur);
+  return chunks; // arrays of row indices
+}
+
+// Measure-and-pack every trade group: render each trade's FULL table in an off-screen probe
+// at the print content width, read the real header/thead/tfoot/row heights, and pack rows
+// into per-page chunks. Returns, per group, an array of item-arrays (one per printed page).
+function paginateGroups(groups) {
+  const probe = document.createElement("div");
+  // 818px = 7.5in content + 2×0.5in .page padding + 2px border → .page content box = 720px,
+  // identical to both the on-screen sheet and the printed one.
+  probe.style.cssText = "position:absolute;left:-9999px;top:0;width:818px;visibility:hidden";
+  document.body.appendChild(probe);
+  const wrap = (html) => `<main class="doc" style="max-width:none;margin:0;padding:0">${html}</main>`;
+  const out = groups.map((g) => {
+    probe.innerHTML = wrap(tradeDetailPageHTML(g, g.items, { cont: false, last: true }));
+    const table = probe.querySelector("table.lines");
+    const headFirst = probe.querySelector(".trade-page-head").offsetHeight;
+    const theadH = table.querySelector("thead").offsetHeight;
+    const tfootH = table.querySelector("tfoot").offsetHeight;
+    const tableMargin = parseFloat(getComputedStyle(table).marginTop) || 0;
+    const rowHs = [...table.querySelectorAll("tbody tr")].map((tr) => tr.offsetHeight);
+    probe.innerHTML = wrap(tradeDetailPageHTML(g, [], { cont: true, last: false }));
+    const headCont = probe.querySelector(".trade-page-head").offsetHeight;
+    // tfoot height is reserved on EVERY page (only the last actually renders it) — being a
+    // row short on continuation pages is cheaper than a spilled sheet breaking the ranges.
+    const budget = (ci) =>
+      PRINT_USABLE_PX - (ci === 0 ? headFirst : headCont) - tableMargin - theadH - tfootH - PAGE_SLACK;
+    return packRowsByHeight(rowHs, budget).map((idxs) => idxs.map((i) => g.items[i]));
+  });
+  probe.remove();
+  return out;
+}
+
+// Printed-sheet bookkeeping for the multi-structure document. Sections map 1:1 to sheets:
+// sheet 1 is the summary; each structure contributes a divider sheet followed by one sheet
+// per trade chunk. Input: per structure, the array of its trades' chunk counts. Returns
+// [{ start, end, label }] aligned with the input — label is the divider's printed range
+// ("Pages: 3–5", or singular "Page: 3"). Pure — unit-tested by the node harness.
+function computePageRanges(chunkCountsByStructure) {
+  let page = 1; // sheet 1 = the summary page
+  return chunkCountsByStructure.map((counts) => {
+    page += 1; // this structure's divider sheet
+    const start = page + 1;
+    page += counts.reduce((a, n) => a + n, 0);
+    const end = page;
+    return { start, end, label: start === end ? `Page: ${start}` : `Pages: ${start}–${end}` };
+  });
+}
+
+// All printable pages for a list of trade groups, using the measured chunks from
+// paginateGroups so each .page section is one printed sheet.
+function tradePagesHTML(groups, chunksByGroup) {
+  return groups
+    .map((g, gi) => {
+      const chunks = chunksByGroup[gi];
+      return chunks
+        .map((c, ci) => tradeDetailPageHTML(g, c, { cont: ci > 0, last: ci === chunks.length - 1 }))
+        .join("");
+    })
+    .join("");
+}
+
+// One printable page of a trade's line items. Continuation pages (a long trade split by
+// ROWS_PER_PAGE) carry a "(cont.)" title and no totals strip; the trade-total footer row
+// appears only on the last page so it sums the WHOLE trade exactly once.
+function tradeDetailPageHTML(g, pageItems, { cont = false, last = true } = {}) {
   const dash = dashHTML;
-  const rows = g.items
+  const rows = pageItems
     .map((it) => {
       const recAmt = Number(it.recoverableDep) || 0;
       const nrAmt = Number(it.nonRecoverableDep) || 0;
@@ -868,27 +981,33 @@ function tradeDetailPageHTML(g) {
             </tr>`;
     })
     .join("");
-  return `
-        <section class="page">
-          <div class="trade-page-head">
-            <div class="trade-page-title"><span class="bar" style="background:${g.color}"></span><h2>${esc(g.trade)}</h2></div>
+  const totals = cont
+    ? ""
+    : `
             <div class="trade-page-totals">
               <div class="tpt"><div class="k">RCV</div><div class="v">${fmtUSD(g.rcv)}</div></div>
               ${g.pwi > 0 ? `<div class="tpt"><div class="k">Paid When Incurred</div><div class="v">${fmtUSD(g.pwi)}</div></div>` : ""}
               <div class="tpt"><div class="k">Recoverable Dep.</div><div class="v">${fmtUSD(g.recDep)}</div></div>
               <div class="tpt"><div class="k">ACV</div><div class="v">${fmtUSD(g.acv)}</div></div>
-            </div>
+            </div>`;
+  const tfoot = !last
+    ? ""
+    : `
+            <tfoot><tr>
+              <td class="left" colspan="3">${esc(g.trade)} total (${g.items.length} line${g.items.length === 1 ? "" : "s"})</td>
+              <td>${fmtUSD(g.rcv)}</td><td>${g.pwi > 0 ? fmtUSD(g.pwi) : dash}</td><td>${fmtUSD(g.recDep)}</td><td>${fmtUSD(g.nonRecDep)}</td><td>${fmtUSD(g.acv)}</td>
+            </tr></tfoot>`;
+  return `
+        <section class="page">
+          <div class="trade-page-head">
+            <div class="trade-page-title"><span class="bar" style="background:${g.color}"></span><h2>${esc(g.trade)}${cont ? ' <span class="cont-tag">(cont.)</span>' : ""}</h2></div>${totals}
           </div>
           <table class="lines">
             <thead><tr>
               <th class="left">Line&nbsp;#</th><th class="left">Description</th><th class="left">Quantity</th>
               <th>RCV</th><th>Paid When Incurred</th><th>Recoverable Dep.</th><th>Non-Rec. Dep.</th><th>ACV</th>
             </tr></thead>
-            <tbody>${rows}</tbody>
-            <tfoot><tr>
-              <td class="left" colspan="3">${esc(g.trade)} total (${g.items.length} line${g.items.length === 1 ? "" : "s"})</td>
-              <td>${fmtUSD(g.rcv)}</td><td>${g.pwi > 0 ? fmtUSD(g.pwi) : dash}</td><td>${fmtUSD(g.recDep)}</td><td>${fmtUSD(g.nonRecDep)}</td><td>${fmtUSD(g.acv)}</td>
-            </tr></tfoot>
+            <tbody>${rows}</tbody>${tfoot}
           </table>
         </section>`;
 }
@@ -957,33 +1076,30 @@ function renderDoc() {
       </div>
 
       ${summaryBody}
-
-      <p class="footnote">
-        <strong>RCV − Paid When Incurred − Recoverable Dep − Non-Recoverable Dep = ACV.</strong>
-        Recoverable and Non-Recoverable Depreciation are separate, non-overlapping buckets that
-        together make up a line's total depreciation. Paid-When-Incurred (struck through in the claim —
-        e.g. deferred debris removal) is paid at actuals and subtracted from ACV by the same formula,
-        so a fully paid-when-incurred line nets to $0.00 ACV and drops out of ACV.
-        O&amp;P and Taxes are estimate-wide (RCV already includes them) and are not split per trade or
-        structure, so those cells show “—” and the estimate totals appear on the ${multi ? "Claim Total" : "Total"} row.
-      </p>
     </section>`;
 
-  // ---------- Detail pages: one per trade, grouped under a structure divider when >1 ----------
+  // ---------- Detail pages: one sheet per trade chunk, under a structure divider when >1 ----------
+  // Long trades are split across multiple .page sections by MEASURED row heights so sections
+  // map 1:1 to printed sheets — that mapping is what makes the dividers' page ranges true.
   let detailPages;
   if (!multi) {
-    detailPages = groupByTrade(items).map(tradeDetailPageHTML).join("");
+    const groups = groupByTrade(items);
+    detailPages = tradePagesHTML(groups, paginateGroups(groups));
   } else {
-    detailPages = usedStructures
-      .map((s) => {
-        const its = items.filter((it) => it.structureId === s.id);
+    const perStructure = usedStructures.map((s) => {
+      const groups = groupByTrade(items.filter((it) => it.structureId === s.id));
+      return { s, groups, chunks: paginateGroups(groups) };
+    });
+    const ranges = computePageRanges(perStructure.map((p) => p.chunks.map((c) => c.length)));
+    detailPages = perStructure
+      .map((p, si) => {
+        // Cover page: the structure name IS the page, with the printed range of its trade sheets.
         const divider = `
         <section class="page structure-divider">
-          <p class="sd-eyebrow">Structure</p>
-          <h2 class="sd-name">${esc(s.name)}</h2>
-          <p class="sd-sub">Line Item Breakdowns by Trade</p>
+          <h2 class="sd-name">${esc(p.s.name)}</h2>
+          <p class="sd-pages">${esc(ranges[si].label)}</p>
         </section>`;
-        return divider + groupByTrade(its).map(tradeDetailPageHTML).join("");
+        return divider + tradePagesHTML(p.groups, p.chunks);
       })
       .join("");
   }
@@ -1080,6 +1196,10 @@ function init() {
     if (ok) return renderDoc();
     showDiscrepancyModal(rows);
   });
+
+  // Editing the range field clears any status from a previous Apply — otherwise a stale
+  // "Ignored invalid token: …" naming an OLD token sits next to freshly typed input.
+  document.getElementById("rangeInput").addEventListener("input", () => setStatus(""));
 
   // Apply the chosen trade and/or structure to the lines named in the range field. One
   // button, one range; each dropdown has a "— no change —" sentinel (value ""), so the
