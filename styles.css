@@ -511,8 +511,13 @@ body {
   letter-spacing: -0.01em;
   color: var(--accent);
 }
-/* The first structure heading sits directly under the meta grid — no extra breathing room. */
-.meta-grid + .struct-summary-head { margin-top: 0; }
+/* Summary pagination wrappers: each is its own BFC (overflow: hidden) so child margins are
+   contained and a probe's offsetHeight equals the printed extent — the summary block packing
+   depends on that equality. */
+.sum-headmeta, .sum-block { overflow: hidden; }
+/* The first summary section (Claim Total) sits directly under the meta grid — no extra
+   breathing room above its heading. */
+.sum-headmeta + .sum-block > .struct-summary-head { margin-top: 0; }
 
 /* ---- Structure divider (cover) pages ---- */
 /* The structure name IS the page: huge, navy, centered both ways, with the printed page

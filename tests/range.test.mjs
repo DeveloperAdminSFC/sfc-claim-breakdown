@@ -218,6 +218,11 @@ t("computePageRanges: plain two-structure LITKE-ish shape", () => {
   assert.deepEqual(a, { start: 3, end: 5, label: "Pages: 3–5" });
   assert.deepEqual(b, { start: 7, end: 8, label: "Pages: 7–8" });
 });
+t("computePageRanges: a 2-sheet summary shifts every range by one", () => {
+  const [a, b] = local(computePageRanges([[1, 1, 1], [1, 1]], 2));
+  assert.deepEqual(a, { start: 4, end: 6, label: "Pages: 4–6" });
+  assert.deepEqual(b, { start: 8, end: 9, label: "Pages: 8–9" });
+});
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

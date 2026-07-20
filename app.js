@@ -942,12 +942,14 @@ function paginateGroups(groups) {
 }
 
 // Printed-sheet bookkeeping for the multi-structure document. Sections map 1:1 to sheets:
-// sheet 1 is the summary; each structure contributes a divider sheet followed by one sheet
-// per trade chunk. Input: per structure, the array of its trades' chunk counts. Returns
-// [{ start, end, label }] aligned with the input — label is the divider's printed range
-// ("Pages: 3–5", or singular "Page: 3"). Pure — unit-tested by the node harness.
-function computePageRanges(chunkCountsByStructure) {
-  let page = 1; // sheet 1 = the summary page
+// the summary occupies `summaryPages` sheets (a 5-structure summary needs more than one —
+// assuming exactly 1 silently shifted every divider range when it spilled in print); each
+// structure then contributes a divider sheet followed by one sheet per trade chunk. Input:
+// per structure, the array of its trades' chunk counts. Returns [{ start, end, label }]
+// aligned with the input — label is the divider's printed range ("Pages: 3–5", or singular
+// "Page: 3"). Pure — unit-tested by the node harness.
+function computePageRanges(chunkCountsByStructure, summaryPages = 1) {
+  let page = summaryPages; // sheets occupied by the summary section(s)
   return chunkCountsByStructure.map((counts) => {
     page += 1; // this structure's divider sheet
     const start = page + 1;
@@ -955,6 +957,41 @@ function computePageRanges(chunkCountsByStructure) {
     const end = page;
     return { start, end, label: start === end ? `Page: ${start}` : `Pages: ${start}–${end}` };
   });
+}
+
+// Split the multi-structure summary across as many printed sheets as its measured height
+// requires. Blocks (the Claim Total section, then each structure section) never split
+// internally — they pack whole onto sheets via the same height-packing as trade pages.
+// Every emitted element is wrapped in a BFC div (.sum-headmeta / .sum-block, overflow:
+// hidden in CSS) so child margins are contained and the probe's offsetHeight equals the
+// printed extent exactly. Returns { pagesHTML, sheets }.
+function paginateSummary(headMetaHTML, blocks) {
+  const probe = document.createElement("div");
+  // Same probe geometry as paginateGroups: page content box = 720px = one printed sheet.
+  probe.style.cssText = "position:absolute;left:-9999px;top:0;width:818px;visibility:hidden";
+  document.body.appendChild(probe);
+  probe.innerHTML =
+    `<main class="doc" style="max-width:none;margin:0;padding:0"><section class="page">` +
+    `<div class="sum-headmeta">${headMetaHTML}</div>` +
+    blocks.map((b) => `<div class="sum-block">${b}</div>`).join("") +
+    `</section></main>`;
+  const headH = probe.querySelector(".sum-headmeta").offsetHeight;
+  const blockHs = [...probe.querySelectorAll(".sum-block")].map((el) => el.offsetHeight);
+  probe.remove();
+  const chunks = packRowsByHeight(
+    blockHs,
+    (ci) => PRINT_USABLE_PX - (ci === 0 ? headH : 0) - PAGE_SLACK
+  );
+  const pagesHTML = chunks
+    .map(
+      (idxs, ci) =>
+        `<section class="page">` +
+        (ci === 0 ? `<div class="sum-headmeta">${headMetaHTML}</div>` : "") +
+        idxs.map((i) => `<div class="sum-block">${blocks[i]}</div>`).join("") +
+        `</section>`
+    )
+    .join("");
+  return { pagesHTML, sheets: chunks.length };
 }
 
 // All printable pages for a list of trade groups, using the measured chunks from
@@ -1052,35 +1089,13 @@ function renderDoc() {
     ["Printed", new Date().toLocaleDateString("en-US")],
   ];
 
-  // ---------- PAGE 1: trade summary (one section per structure when >1) ----------
-  // O&P and Taxes are estimate-wide, so they appear only on the single-structure Total
-  // row or the multi-structure Claim Total row; per-structure tables show "—".
-  let summaryBody;
-  if (!multi) {
-    summaryBody =
-      `<p class="section-label">Summary by Trade</p>` +
-      summaryTableHTML(groupByTrade(items), { op: totalOP, tax: totalTax });
-  } else {
-    const sections = usedStructures
-      .map((s) => {
-        const its = items.filter((it) => it.structureId === s.id);
-        return (
-          `<div class="struct-summary-head">${esc(s.name)}</div>` +
-          `<p class="section-label">Summary by Trade</p>` +
-          summaryTableHTML(groupByTrade(its), { op: null, tax: null })
-        );
-      })
-      .join("");
-    const claimTotal =
-      `<div class="struct-summary-head claim-total-head">Claim Total</div>` +
-      summaryTableHTML(groupByTrade(items), {
-        op: totalOP, tax: totalTax, totalLabel: "Claim Total", showRows: false,
-      });
-    summaryBody = sections + claimTotal;
-  }
-
-  const page1 = `
-    <section class="page">
+  // ---------- SUMMARY PAGES ----------
+  // Multi-structure order: Claim Total FIRST (full per-trade table aggregated across ALL
+  // structures — O&P/Taxes on its TOTAL row only), then the per-structure sections. The
+  // summary is split across as many .page sections as its measured height needs, so the
+  // divider page ranges stay true (a 5-structure summary does not fit one sheet).
+  // Single-structure: one page, one table — that lone table IS the claim total.
+  const headMeta = `
       <div class="doc-head">
         <p class="doc-eyebrow">Insurance Claim · Trade Breakdown</p>
         <h1 class="doc-title">Claim Summary by Trade</h1>
@@ -1089,10 +1104,34 @@ function renderDoc() {
 
       <div class="meta-grid">
         ${metaRows.map(([k, v]) => `<div class="meta-item"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`).join("")}
-      </div>
+      </div>`;
 
-      ${summaryBody}
+  let summaryPagesHTML;
+  let summarySheets = 1;
+  if (!multi) {
+    summaryPagesHTML = `
+    <section class="page">
+      ${headMeta}
+      <p class="section-label">Summary by Trade</p>
+      ${summaryTableHTML(groupByTrade(items), { op: totalOP, tax: totalTax })}
     </section>`;
+  } else {
+    const claimTotalBlock =
+      `<div class="struct-summary-head claim-total-head">Claim Total</div>` +
+      `<p class="section-label">Summary by Trade</p>` +
+      summaryTableHTML(groupByTrade(items), { op: totalOP, tax: totalTax });
+    const structureBlocks = usedStructures.map((s) => {
+      const its = items.filter((it) => it.structureId === s.id);
+      return (
+        `<div class="struct-summary-head">${esc(s.name)}</div>` +
+        `<p class="section-label">Summary by Trade</p>` +
+        summaryTableHTML(groupByTrade(its), { op: null, tax: null })
+      );
+    });
+    const paged = paginateSummary(headMeta, [claimTotalBlock, ...structureBlocks]);
+    summaryPagesHTML = paged.pagesHTML;
+    summarySheets = paged.sheets;
+  }
 
   // ---------- Detail pages: one sheet per trade chunk, under a structure divider when >1 ----------
   // Long trades are split across multiple .page sections by MEASURED row heights so sections
@@ -1106,7 +1145,10 @@ function renderDoc() {
       const groups = groupByTrade(items.filter((it) => it.structureId === s.id));
       return { s, groups, chunks: paginateGroups(groups) };
     });
-    const ranges = computePageRanges(perStructure.map((p) => p.chunks.map((c) => c.length)));
+    const ranges = computePageRanges(
+      perStructure.map((p) => p.chunks.map((c) => c.length)),
+      summarySheets
+    );
     detailPages = perStructure
       .map((p, si) => {
         // Cover page: the structure name IS the page, with the printed range of its trade sheets.
@@ -1121,7 +1163,7 @@ function renderDoc() {
   }
 
   const docEl = document.getElementById("doc");
-  docEl.innerHTML = page1 + detailPages;
+  docEl.innerHTML = summaryPagesHTML + detailPages;
   document.title = "Claim Breakdown by Trade";
 
   // Show the built pages in a modal overlay; the body scrolls if multi-page.
