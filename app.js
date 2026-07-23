@@ -282,6 +282,10 @@ async function parsePdf(file) {
         description: it.description || "",
         quantity: it.quantity || "",
         rcv,
+        // Per-line O&P and Tax (Xactimate "Total O&P"/"Total Taxes" columns). Already INCLUDED
+        // inside rcv (a decomposition), shown per line/trade; 0 when the carrier has no such column.
+        op: Number(it.op) || 0,
+        tax: Number(it.tax) || 0,
         recoverableDep,
         nonRecoverableDep,
         // Struck-through in the source = paid when incurred (carved out of ACV). The parser
@@ -715,6 +719,8 @@ function renderReview() {
         <td class="num">${esc(it.displayNumber)}</td>
         <td class="left desc">${esc(it.description)}</td>
         <td class="left">${esc(it.quantity)}</td>
+        <td class="edit-col">${moneyInput("op-in", i, it.op)}</td>
+        <td class="edit-col">${moneyInput("tax-in", i, it.tax)}</td>
         <td class="edit-col">${moneyInput("rcv-in", i, it.rcv)}</td>
         <td class="edit-col">${moneyInput("pwi-in", i, it.paidWhenIncurred)}</td>
         <td class="edit-col">${moneyInput("rec-in", i, it.recoverableDep)}</td>
@@ -770,6 +776,20 @@ function renderReview() {
       refreshAcvCell(i);
     })
   );
+  // O&P and Tax are a DECOMPOSITION of RCV (already inside it), so editing them does NOT touch
+  // ACV — no refreshAcvCell. They only affect the per-trade O&P/Tax breakdown in the summary.
+  body.querySelectorAll(".op-in").forEach((el) =>
+    el.addEventListener("input", (e) => {
+      const i = Number(e.target.dataset.i);
+      state.items[i].op = Math.max(0, Number(e.target.value) || 0);
+    })
+  );
+  body.querySelectorAll(".tax-in").forEach((el) =>
+    el.addEventListener("input", (e) => {
+      const i = Number(e.target.dataset.i);
+      state.items[i].tax = Math.max(0, Number(e.target.value) || 0);
+    })
+  );
 
   // Populate the bulk trade select once. A leading "— no change —" sentinel lets an
   // Apply target structure only (and mirrors the bulk structure select).
@@ -805,13 +825,15 @@ function groupByTrade(items) {
   const extras = [...byTrade.keys()].filter((t) => !TRADE_ORDER.includes(t)).sort();
   return [...ordered, ...extras].map((t) => {
     const its = byTrade.get(t);
-    let rcv = 0, recDep = 0, nonRecDep = 0, pwi = 0, acv = 0;
+    let rcv = 0, op = 0, tax = 0, recDep = 0, nonRecDep = 0, pwi = 0, acv = 0;
     for (const it of its) {
       const r = Number(it.rcv) || 0;
       const p = Number(it.paidWhenIncurred) || 0;
       const rec = Number(it.recoverableDep) || 0;
       const nr = Number(it.nonRecoverableDep) || 0;
       rcv += r;
+      op += Number(it.op) || 0;
+      tax += Number(it.tax) || 0;
       recDep += rec;
       nonRecDep += nr;
       pwi += p;
@@ -821,31 +843,32 @@ function groupByTrade(items) {
       trade: t,
       color: TRADE_COLORS[t] || "#94a3b8",
       items: [...its].sort((x, y) => compareLineNumbers(x.displayNumber, y.displayNumber)),
-      rcv, recDep, nonRecDep, pwi, acv,
+      rcv, op, tax, recDep, nonRecDep, pwi, acv,
     };
   });
 }
 
-// One "Summary by Trade" table: trade rows + a total row. O&P/Taxes are estimate-wide,
-// so per-trade cells always show "—"; they only carry a value on the row where op/tax are
-// passed (the single-structure Total, or the multi-structure Claim Total). showRows:false
-// omits the trade rows — used for the compact Claim Total strip (header + total only).
+// One "Summary by Trade" table: trade rows + a total row. Per-line O&P/Taxes, when the carrier
+// prints them, are summed per trade and shown in those columns (a decomposition of RCV — already
+// inside it). Carriers that itemize O&P/Tax only in the summary leave the per-trade cells at "—"
+// and carry the value only on the Total row (op/tax passed in). showRows:false omits trade rows —
+// used for the compact Claim Total strip (header + total only).
 function summaryTableHTML(groups, { op = null, tax = null, totalLabel = "Total", showRows = true } = {}) {
   const dash = dashHTML;
   const t = groups.reduce(
     (a, g) => {
-      a.rcv += g.rcv; a.recDep += g.recDep; a.nonRecDep += g.nonRecDep; a.pwi += g.pwi; a.acv += g.acv;
+      a.rcv += g.rcv; a.op += g.op || 0; a.tax += g.tax || 0; a.recDep += g.recDep; a.nonRecDep += g.nonRecDep; a.pwi += g.pwi; a.acv += g.acv;
       return a;
     },
-    { rcv: 0, recDep: 0, nonRecDep: 0, pwi: 0, acv: 0 }
+    { rcv: 0, op: 0, tax: 0, recDep: 0, nonRecDep: 0, pwi: 0, acv: 0 }
   );
   const rows = !showRows ? "" : groups
     .map(
       (g) => `
       <tr>
         <td class="left"><span class="trade-cell"><span class="trade-swatch" style="background:${g.color}"></span>${esc(g.trade)}</span></td>
-        <td>${dash}</td>
-        <td>${dash}</td>
+        <td>${g.op > 0 ? fmtUSD(g.op) : dash}</td>
+        <td>${g.tax > 0 ? fmtUSD(g.tax) : dash}</td>
         <td>${fmtUSD(g.rcv)}</td>
         <td>${g.pwi > 0 ? fmtUSD(g.pwi) : dash}</td>
         <td>${fmtUSD(g.recDep)}</td>
@@ -863,8 +886,8 @@ function summaryTableHTML(groups, { op = null, tax = null, totalLabel = "Total",
         <tbody>${rows}</tbody>
         <tfoot><tr>
           <td class="left">${esc(totalLabel)}</td>
-          <td>${op != null ? fmtUSD(op) : dash}</td>
-          <td>${tax != null ? fmtUSD(tax) : dash}</td>
+          <td>${op != null ? fmtUSD(op) : (t.op > 0 ? fmtUSD(t.op) : dash)}</td>
+          <td>${tax != null ? fmtUSD(tax) : (t.tax > 0 ? fmtUSD(t.tax) : dash)}</td>
           <td>${fmtUSD(t.rcv)}</td>
           <td>${t.pwi > 0 ? fmtUSD(t.pwi) : dash}</td>
           <td>${fmtUSD(t.recDep)}</td>
@@ -1200,6 +1223,9 @@ async function loadSample() {
         description: it.description || "",
         quantity: it.quantity || "",
         rcv,
+        // Per-line O&P/Tax decomposition (see real-parse mapper). Present in sample-data.json.
+        op: Number(it.op) || 0,
+        tax: Number(it.tax) || 0,
         recoverableDep,
         nonRecoverableDep,
         paidWhenIncurred,
