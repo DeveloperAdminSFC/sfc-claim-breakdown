@@ -1394,7 +1394,7 @@ function renderSfcForm(groups) {
       const bid = sfcIsBid(g.trade);
       // Roof / siding / gutters are LOCKED to the history rate; bid items take a typed cost.
       const rateHTML = bid
-        ? `<span class="field"><input class="input sfc-bid" type="number" min="0" step="1" inputmode="decimal"
+        ? `<span class="sfc-field"><input class="input sfc-bid" type="number" min="0" step="1" inputmode="decimal"
                   data-trade="${esc(g.trade)}" value="${sfc.bids[g.trade] != null ? esc(sfc.bids[g.trade]) : ""}" placeholder="$" />
            <span class="uom">bid</span></span>`
         : `<span class="sfc-rate"><b>${fmtRate(rate.cost.median)}</b> / ${esc(uom)}</span>`;
@@ -1404,7 +1404,7 @@ function renderSfcForm(groups) {
         <td class="check"><input class="sfc-on" type="checkbox" data-trade="${esc(g.trade)}" ${on ? "checked" : ""} title="Include in this production" /></td>
         <td class="trade"><span class="trade-cell"><span class="trade-swatch" style="background:${g.color}"></span>${esc(g.trade)}</span></td>
         <td class="num rcv">${fmtUSD(g.rcv)}</td>
-        <td class="num meas"><span class="field">
+        <td class="num meas"><span class="sfc-field">
           <input class="input sfc-meas" type="number" min="0" step="0.01" inputmode="decimal"
                  data-trade="${esc(g.trade)}" value="${meas != null ? esc(meas) : ""}" placeholder="0" />
           <span class="uom">${esc(uom)}</span>

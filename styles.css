@@ -422,7 +422,7 @@ body {
 .sfc-form th.meas, .sfc-form td.meas { width: 26%; }
 .sfc-form .trade-cell { font-weight: 700; font-size: 16px; color: var(--ink); }
 .sfc-form td.rcv { font-weight: 600; color: var(--ink); }
-.sfc-form .field { display: inline-flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: nowrap; white-space: nowrap; }
+.sfc-form .sfc-field { display: inline-flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: nowrap; white-space: nowrap; }
 .sfc-form .input { width: 118px; min-width: 96px; height: 42px; font-size: 17px; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
 .sfc-form .uom { display: inline-block; width: 38px; color: var(--ink-faint); font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-align: left; }
 .sfc-form .sfc-on { width: 20px; height: 20px; accent-color: var(--accent); cursor: pointer; vertical-align: middle; }
