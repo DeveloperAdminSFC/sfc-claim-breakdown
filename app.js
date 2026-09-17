@@ -1607,58 +1607,80 @@ function renderSfcEstimate(allGroups) {
   document.getElementById("sfcModal").querySelector(".modal-body").scrollTop = 0;
 }
 
-// Page 2 — strategy. With other job costs at 20% of revenue, margin = 1 − 0.20 − cost/price,
-// so the 33% target means cost ≤ 47% of price:
-//   price needed  = cost ÷ 0.47      → charge more = price needed − insurance pays
-//   max cost      = 0.47 × insurance pays → cut cost by = cost − max cost
+// Page 2 — strategy, in three plain blocks. With other job costs at 20% of revenue,
+// margin = 1 − 0.20 − cost/price, so 33% means cost ≤ 47% of price:
+//   price needed = cost ÷ 0.47      → charge more = price needed − insurance pays
+//   max cost     = 0.47 × insurance → cut cost by = cost − max cost
 function strategyPageHTML(rows, payout, tradeCost, per) {
   const keep = 1 - SFC_OTHER_PCT / 100 - SFC_TARGET_MARGIN / 100;
   const money0 = (n) => (n == null ? "—" : Number(n).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }));
   const cell = (n, meas, uom) => (per && uom ? (meas > 0 ? `${fmtRate(n / meas)}<span class="per">/${esc(uom)}</span>` : "—") : money0(n));
   const marginAfter = (rcv, cost) => (rcv > 0 ? (1 - SFC_OTHER_PCT / 100 - cost / rcv) * 100 : null);
 
-  const line = (label, rcv, cost, meas, uom, cls = "") => {
-    const m = marginAfter(rcv, cost);
-    const ok = m != null && m >= SFC_TARGET_MARGIN;
-    const priceNeeded = cost / keep;
-    const more = Math.max(0, priceNeeded - rcv);
-    const maxCost = keep * rcv;
-    const cut = Math.max(0, cost - maxCost);
-    return `
-      <tr class="${cls}">
-        <td class="left">${esc(label)}</td>
-        <td>${cell(rcv, meas, uom)}</td>
-        <td>${cell(cost, meas, uom)}</td>
-        <td class="${ok ? "pos" : "neg"}">${fmtPct1(m)}</td>
-        <td>${cell(priceNeeded, meas, uom)}</td>
-        <td class="${ok ? "pos" : "neg"}">${ok ? "—" : cell(more, meas, uom)}</td>
-        <td>${cell(maxCost, meas, uom)}</td>
-        <td class="${ok ? "pos" : "neg"}">${ok ? "—" : cell(cut, meas, uom)}</td>
-      </tr>`;
-  };
+  const items = rows.filter((x) => x.priced).map((x) => ({ label: x.g.trade, rcv: x.g.rcv, cost: x.cost, meas: x.meas, uom: x.uom, cls: "" }));
+  const all = [...items, { label: "Full job", rcv: payout, cost: tradeCost, meas: 0, uom: null, cls: "sfc-net" }];
+  const okOf = (i) => { const m = marginAfter(i.rcv, i.cost); return m != null && m >= SFC_TARGET_MARGIN; };
+  const good = (i) => `<span class="pos">OK</span>`;
 
-  const body = rows
-    .filter((x) => x.priced)
-    .map((x) => line(x.g.trade, x.g.rcv, x.cost, x.meas, x.uom))
-    .join("");
+  // Block 1 — where we stand
+  const standRows = all.map((i) => {
+    const m = marginAfter(i.rcv, i.cost);
+    return `
+      <tr class="${i.cls}">
+        <td class="left">${esc(i.label)}</td>
+        <td>${cell(i.rcv, i.meas, i.uom)}</td>
+        <td>${cell(i.cost, i.meas, i.uom)}</td>
+        <td class="${okOf(i) ? "pos" : "neg"}">${fmtPct1(m)}</td>
+      </tr>`;
+  });
+
+  // Block 2 — raise the price
+  const priceRows = all.map((i) => {
+    const need = i.cost / keep;
+    const more = Math.max(0, need - i.rcv);
+    return `
+      <tr class="${i.cls}">
+        <td class="left">${esc(i.label)}</td>
+        <td>${cell(i.rcv, i.meas, i.uom)}</td>
+        <td>${cell(need, i.meas, i.uom)}</td>
+        <td class="${okOf(i) ? "pos" : "neg"}">${okOf(i) ? good(i) : cell(more, i.meas, i.uom)}</td>
+      </tr>`;
+  });
+
+  // Block 3 — cut the cost
+  const costRows = all.map((i) => {
+    const max = keep * i.rcv;
+    const cut = Math.max(0, i.cost - max);
+    return `
+      <tr class="${i.cls}">
+        <td class="left">${esc(i.label)}</td>
+        <td>${cell(i.cost, i.meas, i.uom)}</td>
+        <td>${cell(max, i.meas, i.uom)}</td>
+        <td class="${okOf(i) ? "pos" : "neg"}">${okOf(i) ? good(i) : cell(cut, i.meas, i.uom)}</td>
+      </tr>`;
+  });
+
+  const block = (title, lead, heads, body) => `
+      <div class="sfc-block">
+        <h2 class="sfc-block-title">${title}</h2>
+        <p class="sfc-block-lead">${lead}</p>
+        <table class="summary sfc-est sfc-strategy">
+          <thead><tr>${heads.map((h, k) => `<th class="${k === 0 ? "left" : ""}">${h}</th>`).join("")}</tr></thead>
+          <tbody>${body.slice(0, -1).join("")}</tbody>
+          <tfoot>${body[body.length - 1]}</tfoot>
+        </table>
+      </div>`;
 
   return `
     <section class="page">
       <div class="doc-head">
         <p class="doc-eyebrow">SFC Estimate · Strategy</p>
         <h1 class="doc-title sfc-title">${esc(sfc.client || "SFC Estimate")}</h1>
-        <p class="doc-sub">Two levers per trade to reach ${SFC_TARGET_MARGIN}% job margin: raise the price, or cut the cost</p>
+        <p class="doc-sub">Target: ${SFC_TARGET_MARGIN}% job margin after job costs. Fix each red trade with one of the two options below.</p>
       </div>
-      <table class="summary sfc-est sfc-strategy">
-        <thead><tr>
-          <th class="left" rowspan="2">Trade</th><th rowspan="2">Insurance pays</th><th rowspan="2">SFC cost</th><th rowspan="2">Margin</th>
-          <th colspan="2" class="group">Price lever</th><th colspan="2" class="group">Cost lever</th>
-        </tr><tr>
-          <th>Price needed</th><th>Charge more</th><th>Max cost</th><th>Cut cost by</th>
-        </tr></thead>
-        <tbody>${body}</tbody>
-        <tfoot>${line("Full job", payout, tradeCost, 0, null, "sfc-net")}</tfoot>
-      </table>
+      ${block("1 · Where we stand", "Margin after the 20% job costs. Green is at or above 33%.", ["Trade", "Insurance pays", "SFC cost", "Margin"], standRows)}
+      ${block("2 · Option A — raise the price", "What the trade has to bring in to hit 33%, and how much more than insurance that is. Supplement the claim or charge the client.", ["Trade", "Insurance pays", "Price needed", "Charge more"], priceRows)}
+      ${block("3 · Option B — cut the cost", "The most the trade can cost at the insurance number, and how much has to come off.", ["Trade", "SFC cost now", "Max cost", "Cut cost by"], costRows)}
     </section>`;
 }
 

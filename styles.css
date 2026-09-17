@@ -452,11 +452,14 @@ body {
 .summary.sfc-est tr.sfc-net td { border-top: 2px solid #000; padding-top: 18px; padding-bottom: 18px; font-size: 17px; }
 .summary.sfc-est tfoot td.left { text-transform: none; letter-spacing: 0; font-size: inherit; }
 .sfc-title { font-size: 30px; font-weight: 800; color: #000; letter-spacing: -0.01em; }
-.summary.sfc-strategy { font-size: 13.5px; }
-.summary.sfc-strategy thead th { font-size: 9.5px; padding: 6px 5px; vertical-align: bottom; }
-.summary.sfc-strategy thead th.group { text-align: center; border-bottom: 1px solid var(--rule-strong); color: var(--ink); font-size: 10.5px; }
-.summary.sfc-strategy tbody td, .summary.sfc-strategy tfoot td { padding: 10px 5px; }
-.summary.sfc-strategy tfoot td { font-size: 14px; }
+.sfc-block { margin-top: 26px; }
+.sfc-block-title { font-size: 17px; font-weight: 800; color: #000; margin: 0 0 4px; }
+.sfc-block-lead { font-size: 13px; color: var(--ink-soft); margin: 0 0 10px; line-height: 1.45; }
+.summary.sfc-strategy { font-size: 15px; }
+.summary.sfc-strategy thead th { font-size: 10.5px; padding: 8px 8px; }
+.summary.sfc-strategy tbody td, .summary.sfc-strategy tfoot td { padding: 10px 8px; }
+.summary.sfc-strategy tfoot td { font-size: 16px; }
+.summary.sfc-strategy .pos { color: var(--pos); }
 .sfc-rates { font-size: 11.5px; color: var(--ink-soft); margin: 12px 0 0; line-height: 1.6; }
 .sfc-rates b { color: var(--ink); }
 .btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
