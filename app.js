@@ -1270,10 +1270,8 @@ async function loadSample() {
 //
 //   trades          insurance pays (trade RCV) vs SFC cost (median cost/unit × measurement)
 //   other job costs every COGS line that is not labor or materials — per roof SQ
-//   overhead        operating expenses per roof SQ
-//   net profit      at the insurance pay out
-//   SFC prices      bare minimum (25% net) and target (33% net) for the full job:
-//                   (trade cost + other job costs + overhead) ÷ (1 − margin)
+//   job summary     gross profit at the insurance pay out (after trades + other job costs);
+//                   green at or above the 33% gross-margin target
 //
 // Every rate comes from pricing history; only the measurements and client are typed.
 const SFC_TRADE_UOM = { ROOF: "SQ", SIDING: "SF", GUTTERS: "LF", PAINT: "SF", WINDOWS: "EA", FENCE: "LF", GARAGE: "SF", SOLAR: "PNL" };
@@ -1289,8 +1287,7 @@ let sfc = { pricing: null, measurements: {}, bids: {}, included: {}, client: "",
 function sfcIsBid(trade) {
   return SFC_BID_TRADES.has(trade) || !sfcRateFor(trade);
 }
-const SFC_MIN_MARGIN = 25; // bare minimum net margin, % of revenue
-const SFC_TARGET_MARGIN = 33; // target net margin
+const SFC_TARGET_MARGIN = 33; // required gross margin, % of revenue
 // No roof in the production (siding-only, gutters-only…): job costs and overhead are
 // charged as a share of the pay out instead of per roof SQ. Other job costs at a flat
 // 20% (Yash's rule; history says 20.5%), overhead at the P&L's actual share.
@@ -1488,10 +1485,9 @@ function renderSfcEstimate(allGroups) {
   const roofSq = roofRow ? roofRow.meas : 0;
   const perSq = roofSq > 0 && r.otherPerSq != null && r.ohPerSq != null;
   const other = perSq ? r.otherPerSq * roofSq : payout * (SFC_OTHER_PCT_NO_ROOF / 100);
-  const overhead = perSq ? r.ohPerSq * roofSq : payout * (r.ohPct / 100);
 
-  // Net at the insurance pay out
-  const totalCost = tradeCost + other + overhead;
+  // Gross profit at the insurance pay out (overhead is not charged to the job)
+  const totalCost = tradeCost + other;
   const net = payout - totalCost;
   const netPct = payout > 0 ? (net / payout) * 100 : null;
 
@@ -1551,72 +1547,14 @@ function renderSfcEstimate(allGroups) {
         <tbody>
           ${tradeRows}
           ${sqRow("Other Job Costs", other, SFC_OTHER_PCT_NO_ROOF)}
-          ${sqRow("Overhead", overhead, r.ohPct)}
         </tbody>
         <tfoot>
           ${jobRow("Job Summary", "sfc-net", payout, totalCost, netPct, pctCls(netPct))}
         </tfoot>
       </table>
-    </section>
-    ${chargePageHTML(rows, priced, tradeCost, other + overhead, payout, per, roofSq, perSq ? null : (SFC_OTHER_PCT_NO_ROOF + r.ohPct) / 100)}`;
+    </section>`;
   sfcBarMode("estimate");
   document.getElementById("sfcModal").querySelector(".modal-body").scrollTop = 0;
-}
-
-// Page 2 — what to charge, trade by trade. Other job costs and overhead are spread
-// across the priced trades in proportion to their direct cost, so the per-trade
-// prices add up to the full-job prices on page 1.
-// pctLoad: when job costs are a share of revenue (no roof), the price must cover them
-// at the PRICE, not at the pay out — solve R = cost ÷ (1 − pctLoad − margin).
-function chargePageHTML(rows, priced, tradeCost, jobCosts, payout, per, roofSq, pctLoad) {
-  const money0 = (n) => (n == null ? "—" : Number(n).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }));
-  const cell = (n, meas, uom) => (per ? (meas > 0 ? `${fmtRate(n / meas)}<span class="per">/${esc(uom)}</span>` : "—") : money0(n));
-  const load = tradeCost > 0 ? jobCosts / tradeCost : 0; // job costs per $1 of trade cost
-  const priceAt = (cost, m) =>
-    pctLoad != null ? cost / (1 - pctLoad - m / 100) : (cost * (1 + load)) / (1 - m / 100);
-
-  const lines = rows.map((x) => {
-    const minP = x.priced ? priceAt(x.cost, SFC_MIN_MARGIN) : null;
-    const tgtP = x.priced ? priceAt(x.cost, SFC_TARGET_MARGIN) : null;
-    return { ...x, minP, tgtP };
-  });
-  const tMin = priced.reduce((a, x) => a + priceAt(x.cost, SFC_MIN_MARGIN), 0);
-  const tTgt = priced.reduce((a, x) => a + priceAt(x.cost, SFC_TARGET_MARGIN), 0);
-
-  const body = lines
-    .map((x) => `
-      <tr>
-        <td class="left">${esc(x.g.trade)}</td>
-        <td class="center">${x.meas != null ? `${esc(x.meas)} ${esc(x.uom)}` : "—"}</td>
-        <td>${cell(x.g.rcv, x.meas, x.uom)}</td>
-        <td>${x.priced ? cell(x.minP, x.meas, x.uom) : "—"}</td>
-        <td>${x.priced ? cell(x.tgtP, x.meas, x.uom) : "—"}</td>
-      </tr>`)
-    .join("");
-
-  return `
-    <section class="page">
-      <div class="doc-head">
-        <p class="doc-eyebrow">SFC Estimate · What to Charge</p>
-        <h1 class="doc-title sfc-title">${esc(sfc.client || "SFC Estimate")}</h1>
-        <p class="doc-sub">Insurance pay out vs SFC price by trade</p>
-      </div>
-      <table class="summary sfc-est">
-        <thead><tr>
-          <th class="left">Trade</th><th class="center">Measurement</th>
-          <th>Insurance pays</th><th>SFC Minimum (${SFC_MIN_MARGIN}%)</th><th>SFC Target (${SFC_TARGET_MARGIN}%)</th>
-        </tr></thead>
-        <tbody>${body}</tbody>
-        <tfoot>
-          <tr class="sfc-net">
-            <td class="left" colspan="2">Full job</td>
-            <td>${cell(payout, roofSq, "SQ")}</td>
-            <td>${cell(tMin, roofSq, "SQ")}</td>
-            <td>${cell(tTgt, roofSq, "SQ")}</td>
-          </tr>
-        </tfoot>
-      </table>
-    </section>`;
 }
 
 function closeSfcModal() {
