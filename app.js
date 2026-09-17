@@ -67,8 +67,11 @@ const TRADE_COLORS = {
 // Production backend (Cloud Run). Its /api/estimates/{job}/parse endpoint parses the
 // PDF server-side and returns { items, summary, validation }.
 // Dev override: ?backend=http://localhost:8000 points every call at a local backend.
+// Guarded so the Node test harness (vm sandbox, no window) can still load this file.
 const BACKEND_URL =
-  new URLSearchParams(location.search).get("backend") ||
+  (typeof location !== "undefined" && typeof URLSearchParams !== "undefined"
+    ? new URLSearchParams(location.search).get("backend")
+    : null) ||
   "https://sfc-operational-intelligence-git-101019263046.us-central1.run.app";
 
 // ------------------------------- State ----------------------------------- //
