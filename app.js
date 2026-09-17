@@ -1435,15 +1435,20 @@ function renderSfcEstimate(groups) {
   const crDate = md.date_of_loss || "—";
   const client = sfc.client || "—";
   const commR = sfc.commPct / 100, ohR = sfc.ohPct / 100, otherR = sfc.otherPct / 100;
-  // Share of revenue left for direct cost once commissions, overhead, other job costs and
-  // the target are paid.
-  const keep = 1 - commR - ohR - otherR - sfc.targetPct / 100;
+  // Target revenue = net cost ÷ (1 − target%): the price that leaves target% after net cost.
+  const keep = 1 - sfc.targetPct / 100;
   const per = sfc.perUnit;
-  const money = (n, meas, uom) =>
-    per ? (meas > 0 ? `${fmtRate(n / meas)}<span class="per">/ ${esc(uom)}</span>` : "—") : fmtUSD(n);
-  const pctClass = (pct) => (pct == null ? "" : pct < 0 ? "neg" : pct >= sfc.targetPct ? "pos" : "mid");
-  const profitCell = (profit, pct, meas, uom) =>
-    profit == null ? "—" : `${money(profit, meas, uom)} <span class="pct ${pctClass(pct)}">${fmtPct1(pct)}</span>`;
+  const money = (n, meas) => (per ? (meas > 0 ? fmtRate(n / meas) : "—") : fmtUSD(n));
+  const perTitle = per ? " / UOM" : "";
+  // Claim report date as MM/DD/YYYY.
+  const crDateFmt = (() => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(crDate));
+    return m ? `${m[2]}/${m[3]}/${m[1]}` : crDate;
+  })();
+  // Green at or above the target, red below it.
+  const pctClass = (pct) => (pct == null ? "" : pct >= sfc.targetPct ? "pos" : "neg");
+  const profitCell = (profit, pct, meas) =>
+    profit == null ? "—" : `${money(profit, meas)} <span class="pct ${pctClass(pct)}">${fmtPct1(pct)}</span>`;
 
   const rows = groups.map((g) => {
     const uom = SFC_TRADE_UOM[g.trade];
@@ -1454,7 +1459,7 @@ function renderSfcEstimate(groups) {
     const cost = priced ? direct + g.rcv * (commR + ohR) : null; // loaded at the insurance pay out
     const profit = priced ? g.rcv - cost : null;
     const pct = priced && g.rcv > 0 ? (profit / g.rcv) * 100 : null;
-    const target = priced && keep > 0.005 ? direct / keep : null;
+    const target = priced && keep > 0.005 ? cost / keep : null;
     return { g, uom, meas, priced, direct, cost, profit, pct, target };
   });
 
@@ -1465,29 +1470,29 @@ function renderSfcEstimate(groups) {
   const totCost = priced.reduce((a, r) => a + r.cost, 0) + other;
   const totProfit = payout - totCost;
   const totPct = payout > 0 ? (totProfit / payout) * 100 : null;
-  const totTarget = priced.reduce((a, r) => a + (r.target || 0), 0);
+  const totTarget = keep > 0.005 ? totCost / keep : 0;
 
   const body = rows
     .map((r) => `
       <tr>
         <td class="left">${esc(client)}</td>
-        <td class="left">${esc(r.g.trade)}</td>
-        <td>${r.meas != null ? `${esc(r.meas)} ${esc(r.uom)}` : "—"}</td>
-        <td>${esc(crDate)}</td>
-        <td>${money(r.g.rcv, r.meas, r.uom)}</td>
-        <td>${r.priced ? money(r.cost, r.meas, r.uom) : "—"}</td>
-        <td>${profitCell(r.profit, r.pct, r.meas, r.uom)}</td>
-        <td>${r.priced ? money(r.target, r.meas, r.uom) : "—"}</td>
+        <td class="center">${esc(r.g.trade)}</td>
+        <td class="center">${r.meas != null ? `${esc(r.meas)} ${esc(r.uom)}` : "—"}</td>
+        <td class="center">${esc(crDateFmt)}</td>
+        <td>${money(r.g.rcv, r.meas)}</td>
+        <td>${r.priced ? money(r.cost, r.meas) : "—"}</td>
+        <td>${profitCell(r.profit, r.pct, r.meas)}</td>
+        <td>${r.priced ? money(r.target, r.meas) : "—"}</td>
       </tr>`)
     .join("") + `
       <tr class="sfc-other">
         <td class="left"></td>
-        <td class="left">Other job costs</td>
-        <td>${esc(sfc.otherPct)}%</td>
+        <td class="center">Other job costs</td>
+        <td class="center">${esc(sfc.otherPct)}%</td>
         <td></td>
         <td></td>
-        <td>${money(other, roofSq, "SQ")}</td>
-        <td>${money(-other, roofSq, "SQ")}</td>
+        <td>${money(other, roofSq)}</td>
+        <td>${money(-other, roofSq)}</td>
         <td></td>
       </tr>`;
 
@@ -1495,21 +1500,21 @@ function renderSfcEstimate(groups) {
     <section class="page">
       <div class="doc-head">
         <p class="doc-eyebrow">SFC Estimate · Insurance vs SFC Pricing</p>
-        <h1 class="doc-title">${esc(client !== "—" ? client : "SFC Estimate")}</h1>
+        <h1 class="doc-title sfc-title">${esc(client !== "—" ? client : "SFC Estimate")}</h1>
         <p class="doc-sub">${esc(md.insurance_company || "")}${md.insurance_company && md.claim_number ? " · " : ""}${md.claim_number ? "Claim #" + esc(md.claim_number) : ""}</p>
       </div>
       <table class="summary sfc-est">
         <thead><tr>
-          <th class="left">Client</th><th class="left">Trade</th><th>UOM</th><th>C.R. Date</th>
-          <th>Ins Pay Out</th><th>SFC (Net Cost)</th><th>SFC (Projected Profit)</th><th>Target Revenue</th>
+          <th class="left">Client</th><th class="center">Trade</th><th class="center">UOM</th><th class="center">C.R. Date</th>
+          <th>Ins Pay Out${perTitle}</th><th>SFC (Net Cost)${perTitle}</th><th>SFC (Projected Profit)${perTitle}</th><th>Target Revenue${perTitle}</th>
         </tr></thead>
         <tbody>${body}</tbody>
         <tfoot><tr>
-          <td class="left">Total</td><td class="left"></td><td>${per ? "per roof SQ" : ""}</td><td></td>
-          <td>${money(payout, roofSq, "SQ")}</td>
-          <td>${money(totCost, roofSq, "SQ")}</td>
-          <td>${profitCell(totProfit, totPct, roofSq, "SQ")}</td>
-          <td>${money(totTarget, roofSq, "SQ")}</td>
+          <td class="left">Total</td><td></td><td class="center">${per ? "per roof SQ" : ""}</td><td></td>
+          <td>${money(payout, roofSq)}</td>
+          <td>${money(totCost, roofSq)}</td>
+          <td>${profitCell(totProfit, totPct, roofSq)}</td>
+          <td>${money(totTarget, roofSq)}</td>
         </tr></tfoot>
       </table>
     </section>`;

@@ -418,16 +418,19 @@ body {
 .sfc-rate em { font-style: normal; color: var(--ink-faint); }
 .sfc-form-foot { display: flex; justify-content: flex-end; gap: 8px; }
 /* Eight columns on a letter sheet: tighter type and padding, wrap only the split line. */
-.summary.sfc-est { font-size: 11px; table-layout: auto; }
-.summary.sfc-est thead th { font-size: 9.5px; padding: 6px 5px; white-space: normal; }
-.summary.sfc-est tbody td, .summary.sfc-est tfoot td { padding: 7px 5px; white-space: nowrap; }
+.summary.sfc-est { font-size: 14px; table-layout: auto; }
+.summary.sfc-est thead th { font-size: 10px; padding: 8px 6px; white-space: normal; }
+.summary.sfc-est tbody td, .summary.sfc-est tfoot td { padding: 10px 6px; white-space: nowrap; font-weight: 700; color: #000; font-variant-numeric: tabular-nums; }
+.summary.sfc-est tbody td.left, .summary.sfc-est tbody td.center { font-weight: 600; }
+.summary.sfc-est tfoot td { font-size: 15px; }
 .summary.sfc-est td.left { white-space: normal; }
-.summary.sfc-est .pct { font-size: 10.5px; font-weight: 700; margin-left: 4px; color: var(--ink-soft); }
+.summary.sfc-est .pct { font-size: 13px; font-weight: 800; margin-left: 6px; }
 .summary.sfc-est .pct.pos { color: var(--pos); }
-.summary.sfc-est .pct.mid { color: #b45309; }
 .summary.sfc-est .pct.neg { color: var(--neg); }
 .summary.sfc-est tr.sfc-other td { color: var(--ink-soft); }
 .summary.sfc-est tfoot td { font-weight: 700; }
+.summary.sfc-est th.center, .summary.sfc-est td.center { text-align: center; }
+.sfc-title { font-size: 30px; font-weight: 800; color: #000; letter-spacing: -0.01em; }
 .sfc-rates { font-size: 11.5px; color: var(--ink-soft); margin: 12px 0 0; line-height: 1.6; }
 .sfc-rates b { color: var(--ink); }
 .btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
