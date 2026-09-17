@@ -427,6 +427,7 @@ body {
 .sfc-form .uom { display: inline-block; width: 38px; color: var(--ink-faint); font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-align: left; }
 .sfc-form .sfc-on { width: 20px; height: 20px; accent-color: var(--accent); cursor: pointer; vertical-align: middle; }
 .sfc-form tr.sfc-off td:not(.check) { opacity: 0.35; }
+.sfc-form tr.sfc-claimonly .trade-cell { font-weight: 600; color: var(--ink-soft); }
 .sfc-rate { font-size: 16px; color: var(--ink); white-space: nowrap; }
 .sfc-rate b { font-size: 17px; }
 .sfc-rate em { font-style: normal; color: var(--ink-faint); font-size: 13px; }

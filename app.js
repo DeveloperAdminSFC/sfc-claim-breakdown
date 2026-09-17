@@ -1318,10 +1318,12 @@ async function fetchLivePricing() {
   return sfc.pricing;
 }
 
-// Trades on this claim that SFC can price: known unit + RCV > 0.
+// Every trade on the claim with RCV — priced trades (known unit) and claim-only rows
+// (MISC, Not Categorized, personal property…) that count toward what insurance pays.
 function sfcApplicableGroups() {
-  return groupByTrade(state.items).filter((g) => SFC_TRADE_UOM[g.trade] && g.rcv > 0);
+  return groupByTrade(state.items).filter((g) => g.rcv > 0);
 }
+const sfcIsClaimOnly = (trade) => !SFC_TRADE_UOM[trade];
 
 // Live Pricing row for a trade, or null when the history is too thin to price from.
 function sfcRateFor(trade) {
@@ -1341,7 +1343,7 @@ async function openSfcEstimate() {
   if (!state.items.length) return setStatus("Nothing to estimate yet — upload a PDF first.", "error");
   const groups = sfcApplicableGroups();
   if (!groups.length) {
-    return setStatus("Assign lines to ROOF, SIDING, GUTTERS… first — no priced trade has RCV yet.", "error");
+    return setStatus("No line items carry RCV yet.", "error");
   }
   if (!sfc.client && state.jobInfo && state.jobInfo.contact_name) sfc.client = state.jobInfo.contact_name;
 
@@ -1357,6 +1359,7 @@ async function openSfcEstimate() {
     return;
   }
   for (const g of groups) {
+    if (sfcIsClaimOnly(g.trade)) continue;
     if (sfc.measurements[g.trade] == null) sfc.measurements[g.trade] = suggestMeasurement(g.items, SFC_TRADE_UOM[g.trade]);
   }
   // Rates straight from pricing history (Live Pricing's OTHER JOB COSTS and Pricing rows):
@@ -1391,6 +1394,17 @@ function renderSfcForm(groups) {
       const uom = SFC_TRADE_UOM[g.trade];
       const rate = sfcRateFor(g.trade);
       const meas = sfc.measurements[g.trade];
+      if (sfcIsClaimOnly(g.trade)) {
+        const onC = sfc.included[g.trade] !== false;
+        return `
+      <tr class="${onC ? "" : "sfc-off"} sfc-claimonly">
+        <td class="check"><input class="sfc-on" type="checkbox" data-trade="${esc(g.trade)}" ${onC ? "checked" : ""} title="Include in this production" /></td>
+        <td class="trade"><span class="trade-cell"><span class="trade-swatch" style="background:${g.color}"></span>${esc(g.trade)}</span></td>
+        <td class="num rcv">${fmtUSD(g.rcv)}</td>
+        <td class="num meas"></td>
+        <td class="cost"><span class="sfc-rate"><em>claim only</em></span></td>
+      </tr>`;
+      }
       const bid = sfcIsBid(g.trade);
       // Roof / siding / gutters are LOCKED to the history rate; bid items take a typed cost.
       const rateHTML = bid
@@ -1465,6 +1479,9 @@ function renderSfcEstimate(allGroups) {
   // Trades
   const rows = groups.map((g) => {
     const uom = SFC_TRADE_UOM[g.trade];
+    if (sfcIsClaimOnly(g.trade)) {
+      return { g, uom: null, rate: null, meas: null, bid: null, priced: false, cost: null, profit: null, pct: null };
+    }
     const rate = sfcRateFor(g.trade);
     const meas = sfc.measurements[g.trade];
     const bid = sfcIsBid(g.trade) ? sfc.bids[g.trade] : null;
@@ -1475,8 +1492,9 @@ function renderSfcEstimate(allGroups) {
     const pct = priced && g.rcv > 0 ? (profit / g.rcv) * 100 : null;
     return { g, uom, rate, meas, bid, priced, cost, profit, pct };
   });
+  // Insurance pays = the full RCV of every switched-on trade, priced or not.
   const priced = rows.filter((r) => r.priced);
-  const payout = priced.reduce((a, r) => a + r.g.rcv, 0);
+  const payout = rows.reduce((a, r) => a + r.g.rcv, 0);
   const tradeCost = priced.reduce((a, r) => a + r.cost, 0);
 
   // Other job costs: always 20% of the included pay out. Roof squares only feed the
@@ -1501,8 +1519,8 @@ function renderSfcEstimate(allGroups) {
     .map((x) => `
       <tr>
         <td class="left">${esc(x.g.trade)}</td>
-        <td class="center">${x.meas != null ? `${esc(x.meas)} ${esc(x.uom)}` : "—"}</td>
-        <td>${cell(x.g.rcv, x.meas, x.uom)}</td>
+        <td class="center">${x.meas != null ? `${esc(x.meas)} ${esc(x.uom)}` : ""}</td>
+        <td>${x.uom ? cell(x.g.rcv, x.meas, x.uom) : money0(x.g.rcv)}</td>
         <td>${x.priced ? cell(x.cost, x.meas, x.uom) : "—"}</td>
         <td class="${pctCls(x.pct)}">${x.priced ? cell(x.profit, x.meas, x.uom) : "—"}</td>
         <td class="${pctCls(x.pct)}">${x.priced ? fmtPct1(x.pct) : "—"}</td>
