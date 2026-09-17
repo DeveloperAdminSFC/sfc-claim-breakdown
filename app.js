@@ -1500,14 +1500,13 @@ function renderSfcEstimate(allGroups) {
   // figure carries its unit. Job-wide rows are per roof SQ.
   const unit = (n, meas, uom) => (meas > 0 ? `${fmtRate(n / meas)}<span class="per">/${esc(uom)}</span>` : "—");
   const cell = (n, meas, uom) => (per ? unit(n, meas, uom) : money0(n));
-  const span = per ? 2 : 3;
+  const span = 2;
 
   const tradeRows = rows
     .map((x) => `
       <tr>
         <td class="left">${esc(x.g.trade)}</td>
         <td class="center">${x.meas != null ? `${esc(x.meas)} ${esc(x.uom)}` : "—"}</td>
-        ${per ? "" : `<td class="center">${x.bid != null ? "bid" : x.rate ? `${fmtRate(x.rate.cost.median)} / ${esc(x.uom)}` : "—"}</td>`}
         <td>${cell(x.g.rcv, x.meas, x.uom)}</td>
         <td>${x.priced ? cell(x.cost, x.meas, x.uom) : "—"}</td>
         <td class="${pctCls(x.pct)}">${x.priced ? cell(x.profit, x.meas, x.uom) : "—"}</td>
@@ -1515,13 +1514,14 @@ function renderSfcEstimate(allGroups) {
       </tr>`)
     .join("");
 
-  const sqRow = (label, ratePerSq, pct, amount) => `
+  // Dollar view: just the amount. Per-UOM view: the roof squares and the per-SQ figure
+  // (or the % of pay out when the production has no roof).
+  const sqRow = (label, amount, pct) => `
       <tr>
         <td class="left">${esc(label)}</td>
-        <td class="center">${perSq ? `${esc(roofSq)} SQ` : ""}</td>
-        ${per ? "" : `<td class="center">${perSq ? `${fmtRate(ratePerSq)} / SQ` : `${esc(pct)}%`}</td>`}
+        <td class="center">${per && perSq ? `${esc(roofSq)} SQ` : ""}</td>
         <td></td>
-        <td>${cell(amount, roofSq, "SQ")}</td>
+        <td>${per ? (perSq ? cell(amount, roofSq, "SQ") : `${esc(pct)}%`) : money0(amount)}</td>
         <td></td>
         <td></td>
       </tr>`;
@@ -1545,13 +1545,13 @@ function renderSfcEstimate(allGroups) {
       </div>
       <table class="summary sfc-est">
         <thead><tr>
-          <th class="left">Trade</th><th class="center">Measurement</th>${per ? "" : '<th class="center">SFC rate</th>'}
+          <th class="left">Trade</th><th class="center">Measurement</th>
           <th>Insurance pays</th><th>SFC cost</th><th>Profit</th><th>Margin</th>
         </tr></thead>
         <tbody>
           ${tradeRows}
-          ${sqRow(perSq ? "Other Job Costs PSQ" : "Other Job Costs", r.otherPerSq, SFC_OTHER_PCT_NO_ROOF, other)}
-          ${sqRow(perSq ? "Overhead PSQ" : "Overhead", r.ohPerSq, r.ohPct, overhead)}
+          ${sqRow("Other Job Costs", other, SFC_OTHER_PCT_NO_ROOF)}
+          ${sqRow("Overhead", overhead, r.ohPct)}
         </tbody>
         <tfoot>
           ${jobRow("Job Summary", "sfc-net", payout, totalCost, netPct, pctCls(netPct))}
