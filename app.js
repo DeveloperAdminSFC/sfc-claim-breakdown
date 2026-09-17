@@ -1281,7 +1281,9 @@ const SFC_MIN_JOBS = 3; // fewer measured jobs than this → "no SFC rate yet"
 // Bid items: no usable history, the estimator types SFC's cost for the trade. Any other
 // trade whose history is too thin gets the same box.
 const SFC_BID_TRADES = new Set(["WINDOWS", "GARAGE", "SOLAR"]);
-let sfc = { pricing: null, measurements: {}, bids: {}, client: "", perUnit: false, groups: [], rates: null };
+// included: trade -> false when switched off for this production (supplements add and
+// finish trades at different times, so the estimate is rebuilt per production).
+let sfc = { pricing: null, measurements: {}, bids: {}, included: {}, client: "", perUnit: false, groups: [], rates: null };
 
 // True when the trade is priced by a typed bid rather than measurement × rate.
 function sfcIsBid(trade) {
@@ -1395,8 +1397,10 @@ function renderSfcForm(groups) {
                   data-trade="${esc(g.trade)}" value="${sfc.bids[g.trade] != null ? esc(sfc.bids[g.trade]) : ""}" placeholder="SFC cost" />
            <span class="uom">bid</span>`
         : `<span class="sfc-rate"><b>${fmtRate(rate.cost.median)}</b> / ${esc(uom)} <em>· mat ${fmtRate(rate.materials.median)} · labor ${fmtRate(rate.labor.median)} · ${rate.n} jobs</em></span>`;
+      const on = sfc.included[g.trade] !== false;
       return `
-      <tr>
+      <tr class="${on ? "" : "sfc-off"}">
+        <td class="check"><input class="sfc-on" type="checkbox" data-trade="${esc(g.trade)}" ${on ? "checked" : ""} title="Include in this production" /></td>
         <td><span class="trade-cell"><span class="trade-swatch" style="background:${g.color}"></span>${esc(g.trade)}</span></td>
         <td class="num">${fmtUSD(g.rcv)}</td>
         <td class="num">
@@ -1414,7 +1418,7 @@ function renderSfcForm(groups) {
       <label>Client <input id="sfcClient" class="input input-wide" type="text" value="${esc(sfc.client)}" placeholder="Homeowner" /></label>
     </div>
     <table class="sfc-form">
-      <thead><tr><th>Trade</th><th class="num">Ins. pay out (RCV)</th><th class="num">Measurement</th><th>SFC cost</th></tr></thead>
+      <thead><tr><th class="check">On</th><th>Trade</th><th class="num">Ins. pay out (RCV)</th><th class="num">Measurement</th><th>SFC cost</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
     <div class="sfc-form-foot"><button id="sfcBuildBtn" class="btn btn-primary">Build estimate →</button></div>`;
@@ -1428,14 +1432,16 @@ function renderSfcForm(groups) {
       const v = Number(inp.value);
       sfc.bids[inp.dataset.trade] = v > 0 ? v : null;
     }
+    for (const inp of document.querySelectorAll(".sfc-on")) sfc.included[inp.dataset.trade] = inp.checked;
     sfc.client = document.getElementById("sfcClient").value.trim();
     renderSfcEstimate(groups);
   });
 }
 
 // Step 2 — the estimate: trades, other job costs / SQ, overhead / SQ, net, SFC prices.
-function renderSfcEstimate(groups) {
-  sfc.groups = groups;
+function renderSfcEstimate(allGroups) {
+  sfc.groups = allGroups;
+  const groups = allGroups.filter((g) => sfc.included[g.trade] !== false);
   const md = state.summary || {};
   const client = sfc.client || "—";
   const crDate = (() => {
@@ -1555,12 +1561,10 @@ function chargePageHTML(rows, priced, tradeCost, jobCosts, payout, per) {
   const lines = rows.map((x) => {
     const minP = x.priced ? priceAt(x.cost, SFC_MIN_MARGIN) : null;
     const tgtP = x.priced ? priceAt(x.cost, SFC_TARGET_MARGIN) : null;
-    return { ...x, minP, tgtP, more: x.priced ? tgtP - x.g.rcv : null };
+    return { ...x, minP, tgtP };
   });
   const tMin = priced.reduce((a, x) => a + priceAt(x.cost, SFC_MIN_MARGIN), 0);
   const tTgt = priced.reduce((a, x) => a + priceAt(x.cost, SFC_TARGET_MARGIN), 0);
-  const tMore = tTgt - payout;
-  const cls = (n) => (n == null ? "" : n > 0 ? "neg" : "pos");
 
   const body = lines
     .map((x) => `
@@ -1570,7 +1574,6 @@ function chargePageHTML(rows, priced, tradeCost, jobCosts, payout, per) {
         <td>${cell(x.g.rcv, x.meas, x.uom)}</td>
         <td>${x.priced ? cell(x.minP, x.meas, x.uom) : "—"}</td>
         <td>${x.priced ? cell(x.tgtP, x.meas, x.uom) : "—"}</td>
-        <td class="${cls(x.more)}">${x.priced ? cell(x.more, x.meas, x.uom) : "—"}</td>
       </tr>`)
     .join("");
 
@@ -1584,7 +1587,7 @@ function chargePageHTML(rows, priced, tradeCost, jobCosts, payout, per) {
       <table class="summary sfc-est">
         <thead><tr>
           <th class="left">Trade</th><th class="center">Measurement</th>
-          <th>Insurance pays</th><th>SFC Minimum (${SFC_MIN_MARGIN}%)</th><th>SFC Target (${SFC_TARGET_MARGIN}%)</th><th>Charge more</th>
+          <th>Insurance pays</th><th>SFC Minimum (${SFC_MIN_MARGIN}%)</th><th>SFC Target (${SFC_TARGET_MARGIN}%)</th>
         </tr></thead>
         <tbody>${body}</tbody>
         <tfoot>
@@ -1593,7 +1596,6 @@ function chargePageHTML(rows, priced, tradeCost, jobCosts, payout, per) {
             <td>${cell(payout, roofSq, "SQ")}</td>
             <td>${cell(tMin, roofSq, "SQ")}</td>
             <td>${cell(tTgt, roofSq, "SQ")}</td>
-            <td class="${cls(tMore)}">${cell(tMore, roofSq, "SQ")}</td>
           </tr>
         </tfoot>
       </table>
