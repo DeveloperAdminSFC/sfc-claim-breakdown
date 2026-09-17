@@ -417,9 +417,9 @@ body {
 .sfc-form tbody tr:hover td { background: var(--wash); }
 .sfc-form th.check, .sfc-form td.check { width: 48px; text-align: center; padding-left: 4px; padding-right: 4px; }
 .sfc-form th.num, .sfc-form td.num { text-align: right; font-variant-numeric: tabular-nums; }
-.sfc-form th.trade, .sfc-form td.trade { width: 22%; }
-.sfc-form th.rcv, .sfc-form td.rcv { width: 20%; }
-.sfc-form th.meas, .sfc-form td.meas { width: 26%; }
+.sfc-form th.trade, .sfc-form td.trade { width: 20%; }
+.sfc-form th.rcv, .sfc-form td.rcv { width: 16%; }
+.sfc-form th.meas, .sfc-form td.meas { width: 23%; }
 .sfc-form .trade-cell { font-weight: 700; font-size: 16px; color: var(--ink); }
 .sfc-form td.rcv { font-weight: 600; color: var(--ink); }
 .sfc-form .sfc-field { display: inline-flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: nowrap; white-space: nowrap; }
@@ -429,6 +429,8 @@ body {
 .sfc-form tr.sfc-off td:not(.check) { opacity: 0.35; }
 .sfc-form tr.sfc-claimonly .trade-cell { font-weight: 600; color: var(--ink-soft); }
 .sfc-rate { font-size: 16px; color: var(--ink); white-space: nowrap; }
+.sfc-form .btn-lock { height: 28px; padding: 0 9px; font-size: 11.5px; font-weight: 600; margin-left: 4px; }
+.sfc-form .sfc-field .sfc-rate { min-width: 110px; text-align: right; }
 .sfc-rate b { font-size: 17px; }
 .sfc-rate em { font-style: normal; color: var(--ink-faint); font-size: 13px; }
 .sfc-form-foot { display: flex; justify-content: flex-end; gap: 8px; padding-top: 6px; }

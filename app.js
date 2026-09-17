@@ -1281,7 +1281,9 @@ const SFC_MIN_JOBS = 3; // fewer measured jobs than this → "no SFC rate yet"
 const SFC_BID_TRADES = new Set(["WINDOWS", "GARAGE", "SOLAR", "PAINT"]);
 // included: trade -> false when switched off for this production (supplements add and
 // finish trades at different times, so the estimate is rebuilt per production).
-let sfc = { pricing: null, measurements: {}, bids: {}, included: {}, client: "", perUnit: false, groups: [], rates: null };
+// unlocked / rateEdits: a history rate is locked at the median until the estimator
+// clicks Unlock; the typed $/unit then replaces the median for that trade.
+let sfc = { pricing: null, measurements: {}, bids: {}, unlocked: {}, rateEdits: {}, included: {}, client: "", perUnit: false, groups: [], rates: null };
 
 // True when the trade is priced by a typed bid rather than measurement × rate.
 function sfcIsBid(trade) {
@@ -1406,12 +1408,21 @@ function renderSfcForm(groups) {
       </tr>`;
       }
       const bid = sfcIsBid(g.trade);
-      // Roof / siding / gutters are LOCKED to the history rate; bid items take a typed cost.
+      // History rates are locked at the median until unlocked; bid items take a typed cost.
+      const unlocked = !!sfc.unlocked[g.trade];
+      const median = rate ? Math.round(rate.cost.median * 100) / 100 : null;
+      const rateVal = sfc.rateEdits[g.trade] != null ? sfc.rateEdits[g.trade] : median;
       const rateHTML = bid
         ? `<span class="sfc-field"><input class="input sfc-bid" type="number" min="0" step="1" inputmode="decimal"
                   data-trade="${esc(g.trade)}" value="${sfc.bids[g.trade] != null ? esc(sfc.bids[g.trade]) : ""}" placeholder="$" />
            <span class="uom">bid</span></span>`
-        : `<span class="sfc-rate"><b>${fmtRate(rate.cost.median)}</b> / ${esc(uom)}</span>`;
+        : unlocked
+          ? `<span class="sfc-field"><input class="input sfc-rate-in" type="number" min="0" step="0.01" inputmode="decimal"
+                  data-trade="${esc(g.trade)}" value="${esc(rateVal)}" />
+             <span class="uom">/ ${esc(uom)}</span>
+             <button type="button" class="btn btn-ghost btn-lock sfc-lock" data-trade="${esc(g.trade)}" title="Lock back to the median ${fmtRate(median)}">Lock</button></span>`
+          : `<span class="sfc-field"><span class="sfc-rate"><b>${fmtRate(median)}</b> / ${esc(uom)}</span>
+             <button type="button" class="btn btn-ghost btn-lock sfc-unlock" data-trade="${esc(g.trade)}" title="Unlock to type a different rate">Unlock</button></span>`;
       const on = sfc.included[g.trade] !== false;
       return `
       <tr class="${on ? "" : "sfc-off"}">
@@ -1438,6 +1449,21 @@ function renderSfcForm(groups) {
     </table>
     <div class="sfc-form-foot"><button id="sfcBuildBtn" class="btn btn-primary">Build estimate →</button></div>`;
 
+  // Unlock turns a history rate into a field (prefilled with the median); Lock snaps it
+  // back to the median and forgets the edit. Re-render keeps every other input's value.
+  const snapshotInputs = () => {
+    for (const inp of document.querySelectorAll(".sfc-meas")) { const v = Number(inp.value); sfc.measurements[inp.dataset.trade] = v > 0 ? v : null; }
+    for (const inp of document.querySelectorAll(".sfc-bid")) { const v = Number(inp.value); sfc.bids[inp.dataset.trade] = v > 0 ? v : null; }
+    for (const inp of document.querySelectorAll(".sfc-rate-in")) { const v = Number(inp.value); sfc.rateEdits[inp.dataset.trade] = v > 0 ? v : null; }
+    sfc.client = document.getElementById("sfcClient").value.trim();
+  };
+  for (const btn of document.querySelectorAll(".sfc-unlock")) {
+    btn.addEventListener("click", () => { snapshotInputs(); sfc.unlocked[btn.dataset.trade] = true; renderSfcForm(groups); });
+  }
+  for (const btn of document.querySelectorAll(".sfc-lock")) {
+    btn.addEventListener("click", () => { snapshotInputs(); sfc.unlocked[btn.dataset.trade] = false; sfc.rateEdits[btn.dataset.trade] = null; renderSfcForm(groups); });
+  }
+
   // Flip the row's dimmed look live, and record the switch, so toggling never waits
   // for a rebuild and the inputs stay editable either way.
   for (const box of document.querySelectorAll(".sfc-on")) {
@@ -1455,6 +1481,10 @@ function renderSfcForm(groups) {
     for (const inp of document.querySelectorAll(".sfc-bid")) {
       const v = Number(inp.value);
       sfc.bids[inp.dataset.trade] = v > 0 ? v : null;
+    }
+    for (const inp of document.querySelectorAll(".sfc-rate-in")) {
+      const v = Number(inp.value);
+      sfc.rateEdits[inp.dataset.trade] = v > 0 ? v : null;
     }
     for (const inp of document.querySelectorAll(".sfc-on")) sfc.included[inp.dataset.trade] = inp.checked;
     sfc.client = document.getElementById("sfcClient").value.trim();
@@ -1485,7 +1515,7 @@ function renderSfcEstimate(allGroups) {
     const rate = sfcRateFor(g.trade);
     const meas = sfc.measurements[g.trade];
     const bid = sfcIsBid(g.trade) ? sfc.bids[g.trade] : null;
-    const perUnitRate = rate ? rate.cost.median : null;
+    const perUnitRate = rate ? (sfc.unlocked[g.trade] && sfc.rateEdits[g.trade] != null ? sfc.rateEdits[g.trade] : rate.cost.median) : null;
     const priced = bid != null ? bid > 0 : perUnitRate != null && meas != null && meas > 0;
     const cost = !priced ? null : bid != null ? bid : perUnitRate * meas;
     const profit = priced ? g.rcv - cost : null;
