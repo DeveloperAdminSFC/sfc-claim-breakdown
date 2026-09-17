@@ -1423,6 +1423,15 @@ function renderSfcForm(groups) {
     </table>
     <div class="sfc-form-foot"><button id="sfcBuildBtn" class="btn btn-primary">Build estimate →</button></div>`;
 
+  // Flip the row's dimmed look live, and record the switch, so toggling never waits
+  // for a rebuild and the inputs stay editable either way.
+  for (const box of document.querySelectorAll(".sfc-on")) {
+    box.addEventListener("change", () => {
+      sfc.included[box.dataset.trade] = box.checked;
+      box.closest("tr").classList.toggle("sfc-off", !box.checked);
+    });
+  }
+
   document.getElementById("sfcBuildBtn").addEventListener("click", () => {
     for (const inp of document.querySelectorAll(".sfc-meas")) {
       const v = Number(inp.value);
