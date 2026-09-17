@@ -1272,6 +1272,9 @@ async function loadSample() {
 //   other job costs every COGS line that is not labor or materials — per roof SQ
 //   job summary     gross profit at the insurance pay out (after trades + other job costs);
 //                   green at or above the 33% gross-margin target
+//   page 2          strategy per trade — the two levers: the price that reaches 33%
+//                   (charge the client / supplement the claim) or the most the trade
+//                   can cost at the insurance number (cut the cost)
 //
 // Every rate comes from pricing history; only the measurements and client are typed.
 const SFC_TRADE_UOM = { ROOF: "SQ", SIDING: "SF", GUTTERS: "LF", PAINT: "SF", WINDOWS: "EA", FENCE: "LF", GARAGE: "SF", SOLAR: "PNL" };
@@ -1598,9 +1601,65 @@ function renderSfcEstimate(allGroups) {
           ${jobRow("Job Summary", "sfc-net", payout, totalCost, netPct, pctCls(netPct))}
         </tfoot>
       </table>
-    </section>`;
+    </section>
+    ${strategyPageHTML(rows, payout, tradeCost, per)}`;
   sfcBarMode("estimate");
   document.getElementById("sfcModal").querySelector(".modal-body").scrollTop = 0;
+}
+
+// Page 2 — strategy. With other job costs at 20% of revenue, margin = 1 − 0.20 − cost/price,
+// so the 33% target means cost ≤ 47% of price:
+//   price needed  = cost ÷ 0.47      → charge more = price needed − insurance pays
+//   max cost      = 0.47 × insurance pays → cut cost by = cost − max cost
+function strategyPageHTML(rows, payout, tradeCost, per) {
+  const keep = 1 - SFC_OTHER_PCT / 100 - SFC_TARGET_MARGIN / 100;
+  const money0 = (n) => (n == null ? "—" : Number(n).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }));
+  const cell = (n, meas, uom) => (per && uom ? (meas > 0 ? `${fmtRate(n / meas)}<span class="per">/${esc(uom)}</span>` : "—") : money0(n));
+  const marginAfter = (rcv, cost) => (rcv > 0 ? (1 - SFC_OTHER_PCT / 100 - cost / rcv) * 100 : null);
+
+  const line = (label, rcv, cost, meas, uom, cls = "") => {
+    const m = marginAfter(rcv, cost);
+    const ok = m != null && m >= SFC_TARGET_MARGIN;
+    const priceNeeded = cost / keep;
+    const more = Math.max(0, priceNeeded - rcv);
+    const maxCost = keep * rcv;
+    const cut = Math.max(0, cost - maxCost);
+    return `
+      <tr class="${cls}">
+        <td class="left">${esc(label)}</td>
+        <td>${cell(rcv, meas, uom)}</td>
+        <td>${cell(cost, meas, uom)}</td>
+        <td class="${ok ? "pos" : "neg"}">${fmtPct1(m)}</td>
+        <td>${cell(priceNeeded, meas, uom)}</td>
+        <td class="${ok ? "pos" : "neg"}">${ok ? "—" : cell(more, meas, uom)}</td>
+        <td>${cell(maxCost, meas, uom)}</td>
+        <td class="${ok ? "pos" : "neg"}">${ok ? "—" : cell(cut, meas, uom)}</td>
+      </tr>`;
+  };
+
+  const body = rows
+    .filter((x) => x.priced)
+    .map((x) => line(x.g.trade, x.g.rcv, x.cost, x.meas, x.uom))
+    .join("");
+
+  return `
+    <section class="page">
+      <div class="doc-head">
+        <p class="doc-eyebrow">SFC Estimate · Strategy</p>
+        <h1 class="doc-title sfc-title">${esc(sfc.client || "SFC Estimate")}</h1>
+        <p class="doc-sub">Two levers per trade to reach ${SFC_TARGET_MARGIN}% job margin: raise the price, or cut the cost</p>
+      </div>
+      <table class="summary sfc-est sfc-strategy">
+        <thead><tr>
+          <th class="left" rowspan="2">Trade</th><th rowspan="2">Insurance pays</th><th rowspan="2">SFC cost</th><th rowspan="2">Margin</th>
+          <th colspan="2" class="group">Price lever</th><th colspan="2" class="group">Cost lever</th>
+        </tr><tr>
+          <th>Price needed</th><th>Charge more</th><th>Max cost</th><th>Cut cost by</th>
+        </tr></thead>
+        <tbody>${body}</tbody>
+        <tfoot>${line("Full job", payout, tradeCost, 0, null, "sfc-net")}</tfoot>
+      </table>
+    </section>`;
 }
 
 function closeSfcModal() {
