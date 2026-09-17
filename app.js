@@ -1607,56 +1607,39 @@ function renderSfcEstimate(allGroups) {
   document.getElementById("sfcModal").querySelector(".modal-body").scrollTop = 0;
 }
 
-// Page 2 — strategy, in three plain blocks. With other job costs at 20% of revenue,
-// margin = 1 − 0.20 − cost/price, so 33% means cost ≤ 47% of price:
+// Page 2 — strategy: two levers, no second definition of margin. Other job costs are
+// 20% of revenue, so a trade must keep 53% of its own price (1 − 0.20 − 0.33 = 0.47 for
+// cost) for the job to land at 33%:
 //   price needed = cost ÷ 0.47      → charge more = price needed − insurance pays
 //   max cost     = 0.47 × insurance → cut cost by = cost − max cost
 function strategyPageHTML(rows, payout, tradeCost, per) {
   const keep = 1 - SFC_OTHER_PCT / 100 - SFC_TARGET_MARGIN / 100;
+  const tradeTarget = Math.round((1 - keep) * 100); // 53
   const money0 = (n) => (n == null ? "—" : Number(n).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }));
   const cell = (n, meas, uom) => (per && uom ? (meas > 0 ? `${fmtRate(n / meas)}<span class="per">/${esc(uom)}</span>` : "—") : money0(n));
-  const marginAfter = (rcv, cost) => (rcv > 0 ? (1 - SFC_OTHER_PCT / 100 - cost / rcv) * 100 : null);
 
   const items = rows.filter((x) => x.priced).map((x) => ({ label: x.g.trade, rcv: x.g.rcv, cost: x.cost, meas: x.meas, uom: x.uom, cls: "" }));
   const all = [...items, { label: "Full job", rcv: payout, cost: tradeCost, meas: 0, uom: null, cls: "sfc-net" }];
-  const okOf = (i) => { const m = marginAfter(i.rcv, i.cost); return m != null && m >= SFC_TARGET_MARGIN; };
-  const good = (i) => `<span class="pos">OK</span>`;
+  const okOf = (i) => i.rcv > 0 && i.cost <= keep * i.rcv;
 
-  // Block 1 — where we stand
-  const standRows = all.map((i) => {
-    const m = marginAfter(i.rcv, i.cost);
-    return `
-      <tr class="${i.cls}">
-        <td class="left">${esc(i.label)}</td>
-        <td>${cell(i.rcv, i.meas, i.uom)}</td>
-        <td>${cell(i.cost, i.meas, i.uom)}</td>
-        <td class="${okOf(i) ? "pos" : "neg"}">${fmtPct1(m)}</td>
-      </tr>`;
-  });
-
-  // Block 2 — raise the price
   const priceRows = all.map((i) => {
     const need = i.cost / keep;
-    const more = Math.max(0, need - i.rcv);
     return `
       <tr class="${i.cls}">
         <td class="left">${esc(i.label)}</td>
         <td>${cell(i.rcv, i.meas, i.uom)}</td>
         <td>${cell(need, i.meas, i.uom)}</td>
-        <td class="${okOf(i) ? "pos" : "neg"}">${okOf(i) ? good(i) : cell(more, i.meas, i.uom)}</td>
+        <td class="${okOf(i) ? "pos" : "neg"}">${okOf(i) ? "OK" : cell(need - i.rcv, i.meas, i.uom)}</td>
       </tr>`;
   });
-
-  // Block 3 — cut the cost
   const costRows = all.map((i) => {
     const max = keep * i.rcv;
-    const cut = Math.max(0, i.cost - max);
     return `
       <tr class="${i.cls}">
         <td class="left">${esc(i.label)}</td>
         <td>${cell(i.cost, i.meas, i.uom)}</td>
         <td>${cell(max, i.meas, i.uom)}</td>
-        <td class="${okOf(i) ? "pos" : "neg"}">${okOf(i) ? good(i) : cell(cut, i.meas, i.uom)}</td>
+        <td class="${okOf(i) ? "pos" : "neg"}">${okOf(i) ? "OK" : cell(i.cost - max, i.meas, i.uom)}</td>
       </tr>`;
   });
 
@@ -1676,11 +1659,10 @@ function strategyPageHTML(rows, payout, tradeCost, per) {
       <div class="doc-head">
         <p class="doc-eyebrow">SFC Estimate · Strategy</p>
         <h1 class="doc-title sfc-title">${esc(sfc.client || "SFC Estimate")}</h1>
-        <p class="doc-sub">Target: ${SFC_TARGET_MARGIN}% job margin after job costs. Fix each red trade with one of the two options below.</p>
+        <p class="doc-sub">A trade needs ${tradeTarget}% margin on page 1 to leave ${SFC_TARGET_MARGIN}% after the 20% job costs. For each trade below that, pick one option.</p>
       </div>
-      ${block("1 · Where we stand", "Margin after the 20% job costs. Green is at or above 33%.", ["Trade", "Insurance pays", "SFC cost", "Margin"], standRows)}
-      ${block("2 · Option A — raise the price", "What the trade has to bring in to hit 33%, and how much more than insurance that is. Supplement the claim or charge the client.", ["Trade", "Insurance pays", "Price needed", "Charge more"], priceRows)}
-      ${block("3 · Option B — cut the cost", "The most the trade can cost at the insurance number, and how much has to come off.", ["Trade", "SFC cost now", "Max cost", "Cut cost by"], costRows)}
+      ${block("Option A — raise the price", "Supplement the claim or charge the client.", ["Trade", "Insurance pays", "Price needed", "Charge more"], priceRows)}
+      ${block("Option B — cut the cost", "Get the trade done for less.", ["Trade", "SFC cost now", "Max cost", "Cut cost by"], costRows)}
     </section>`;
 }
 
