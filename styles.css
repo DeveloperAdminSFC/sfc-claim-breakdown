@@ -399,6 +399,35 @@ body {
 .disc-na { color: var(--ink-faint); font-weight: 500; }
 .disc-row-bad { background: #fef2f2; }
 
+/* ---- SFC Estimate modal ---- */
+.btn-sfc { border-color: var(--accent); color: var(--accent); background: #fff; }
+.btn-sfc:hover:not(:disabled) { background: #eef2f7; }
+.sfc-note { font-size: 13px; color: var(--ink-soft); margin: 0 0 12px; line-height: 1.5; }
+.sfc-error { color: var(--neg); font-weight: 600; }
+.sfc-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin: 0 0 14px; }
+.sfc-controls label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-soft); }
+.sfc-controls .input { width: 72px; text-align: right; font-variant-numeric: tabular-nums; }
+.sfc-controls .input-wide { width: 220px; text-align: left; }
+.sfc-form { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 14px; }
+.sfc-form th { text-align: left; font-size: 10.5px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-faint); padding: 6px 10px; border-bottom: 1px solid var(--rule-strong); }
+.sfc-form td { padding: 8px 10px; border-bottom: 1px solid var(--rule); vertical-align: middle; }
+.sfc-form td.num, .sfc-form th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.sfc-form .input { width: 110px; text-align: right; font-variant-numeric: tabular-nums; }
+.sfc-form .uom { color: var(--ink-faint); font-size: 12px; margin-left: 6px; }
+.sfc-rate { font-size: 12px; color: var(--ink-soft); white-space: nowrap; }
+.sfc-rate em { font-style: normal; color: var(--ink-faint); }
+.sfc-form-foot { display: flex; justify-content: flex-end; gap: 8px; }
+.summary.sfc-est tbody td { white-space: nowrap; }
+.summary.sfc-est .verdict { display: block; font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; font-weight: 700; margin-top: 2px; }
+.sfc-good td.pct { color: var(--pos); font-weight: 700; }
+.sfc-warn { background: #fffbeb; }
+.sfc-warn td.pct { color: #b45309; font-weight: 700; }
+.sfc-bad { background: #fef2f2; }
+.sfc-bad td.pct { color: var(--neg); font-weight: 700; }
+.sfc-norate td.pct, .sfc-norate td.muted { color: var(--ink-faint); }
+.sfc-rates { font-size: 11.5px; color: var(--ink-soft); margin: 12px 0 0; line-height: 1.6; }
+.sfc-rates b { color: var(--ink); }
+
 /* ============================ DOCUMENT ============================ */
 .doc {
   /* The .page inside must be a full 8.5in sheet: 8.5in + 2×24px .doc padding + 2px .page
@@ -656,9 +685,12 @@ body {
   /* The discrepancy modal never prints — only the summary modal's document does. Keep it hidden
      even though the rule below force-shows the summary modal. */
   #discrepancyModal { display: none !important; }
-  /* Neutralize the summary modal overlay so the pages flow and paginate normally
-     instead of being clipped to the on-screen fixed panel. */
-  #summaryModal, #summaryModal .modal-panel, #summaryModal .modal-body {
+  /* Whichever document modal is closed stays closed on paper. */
+  .modal[hidden] { display: none !important; }
+  /* Neutralize the summary / estimate modal overlay so the pages flow and paginate
+     normally instead of being clipped to the on-screen fixed panel. */
+  #summaryModal, #summaryModal .modal-panel, #summaryModal .modal-body,
+  #sfcModal, #sfcModal .modal-panel, #sfcModal .modal-body {
     position: static !important;
     display: block !important;
     overflow: visible !important;

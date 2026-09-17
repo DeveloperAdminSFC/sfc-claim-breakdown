@@ -44,6 +44,7 @@
         <select id="bulkStructureSelect" class="input input-select" title="Structure to apply"></select>
         <button id="applyLinesBtn" class="btn">Apply to lines</button>
         <button id="buildBtn" class="btn btn-primary">Build summary ↓</button>
+        <button id="sfcBtn" class="btn btn-sfc" title="Price the claim's trades with SFC's live cost history">Build SFC Estimate</button>
       </div>
       <table class="review-table">
         <thead>
@@ -101,6 +102,24 @@
       </header>
       <div class="modal-body">
         <main id="doc" class="doc"><!-- Populated by app.js --></main>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ SFC ESTIMATE MODAL (measurements → SFC pricing vs insurance) ============ -->
+  <div id="sfcModal" class="modal" hidden>
+    <div class="modal-backdrop" id="sfcBackdrop"></div>
+    <div class="modal-panel" role="dialog" aria-modal="true" aria-label="SFC estimate">
+      <header class="modal-bar">
+        <span class="modal-title">SFC Estimate</span>
+        <div class="modal-bar-actions">
+          <button id="sfcBackBtn" class="btn" hidden>← Measurements</button>
+          <button id="sfcPrintBtn" class="btn btn-primary" hidden>Download estimate (PDF)</button>
+          <button id="sfcCloseBtn" class="btn btn-icon" aria-label="Close estimate">✕</button>
+        </div>
+      </header>
+      <div class="modal-body">
+        <main id="sfcBody" class="doc"><!-- Populated by app.js --></main>
       </div>
     </div>
   </div>

@@ -66,7 +66,10 @@ const TRADE_COLORS = {
 // --------------------------- Backend config ------------------------------ //
 // Production backend (Cloud Run). Its /api/estimates/{job}/parse endpoint parses the
 // PDF server-side and returns { items, summary, validation }.
-const BACKEND_URL = "https://sfc-operational-intelligence-git-101019263046.us-central1.run.app";
+// Dev override: ?backend=http://localhost:8000 points every call at a local backend.
+const BACKEND_URL =
+  new URLSearchParams(location.search).get("backend") ||
+  "https://sfc-operational-intelligence-git-101019263046.us-central1.run.app";
 
 // ------------------------------- State ----------------------------------- //
 // The parsed line items for the current claim. Trade is editable in the review
@@ -1256,6 +1259,225 @@ async function loadSample() {
   }
 }
 
+
+// --------------------------- SFC Estimate --------------------------------- //
+// "Build SFC Estimate": price the claim's trades with SFC's live cost history (the
+// OI platform's /api/analytics/live-pricing — the same medians the Live Pricing page
+// shows) and compare to what insurance is paying, trade by trade.
+//
+//   INS PAY OUT      = the trade's RCV from the breakdown (per-line O&P/tax included
+//                      when the carrier itemizes them)
+//   SFC NET COST     = median direct cost per unit (materials + labor) × measurement
+//   TARGET REVENUE   = net cost ÷ (1 − target%)   — target% of revenue left after net cost
+//   CURRENT PROFIT % = (pay out − net cost) ÷ pay out
+//
+// Measurements are asked per applicable trade (trades with RCV), prefilled from the
+// largest parsed quantity in that trade's unit. Nothing persists.
+const SFC_TRADE_UOM = { ROOF: "SQ", SIDING: "SF", GUTTERS: "LF", PAINT: "SF", WINDOWS: "EA", FENCE: "LF", GARAGE: "SF", SOLAR: "PNL" };
+const SFC_MIN_JOBS = 3; // fewer measured jobs than this → "no SFC rate yet"
+let sfc = { pricing: null, measurements: {}, targetPct: 33, client: "" };
+
+// "28.40 SQ" / "1,234.5 SF" → { value, unit }; null when the quantity has no unit.
+function parseQuantity(q) {
+  const m = /([\d,]*\.?\d+)\s*([A-Za-z]+)/.exec(String(q || ""));
+  if (!m) return null;
+  return { value: Number(m[1].replace(/,/g, "")), unit: m[2].toUpperCase() };
+}
+
+// Largest quantity in the trade's unit among its lines — the shingle line for a roof,
+// the siding line for siding. A suggestion only; the form lets the user overwrite it.
+function suggestMeasurement(items, uom) {
+  let best = 0;
+  for (const it of items) {
+    const q = parseQuantity(it.quantity);
+    if (q && q.unit === uom && q.value > best) best = q.value;
+  }
+  return best || null;
+}
+
+async function fetchLivePricing() {
+  if (sfc.pricing) return sfc.pricing;
+  const res = await fetch(`${BACKEND_URL}/api/analytics/live-pricing?population=all&window=all`);
+  if (!res.ok) throw new Error(`Pricing service error (${res.status}).`);
+  sfc.pricing = await res.json();
+  return sfc.pricing;
+}
+
+// Trades on this claim that SFC can price: known unit + RCV > 0.
+function sfcApplicableGroups() {
+  return groupByTrade(state.items).filter((g) => SFC_TRADE_UOM[g.trade] && g.rcv > 0);
+}
+
+// Live Pricing row for a trade, or null when the history is too thin to price from.
+function sfcRateFor(trade) {
+  const t = ((sfc.pricing && sfc.pricing.trades) || []).find((x) => x.trade === trade);
+  if (!t || t.n < SFC_MIN_JOBS || t.cost.median == null) return null;
+  return t;
+}
+
+const fmtRate = (n) => {
+  if (n == null) return "—";
+  const digits = Math.abs(n) < 20 ? 2 : 0;
+  return Number(n).toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: digits, maximumFractionDigits: digits });
+};
+const fmtPct1 = (n) => (n == null || !Number.isFinite(n) ? "—" : `${n.toFixed(1)}%`);
+
+async function openSfcEstimate() {
+  if (!state.items.length) return setStatus("Nothing to estimate yet — upload a PDF first.", "error");
+  const groups = sfcApplicableGroups();
+  if (!groups.length) {
+    return setStatus("Assign lines to ROOF, SIDING, GUTTERS… first — no priced trade has RCV yet.", "error");
+  }
+  if (!sfc.client && state.jobInfo && state.jobInfo.contact_name) sfc.client = state.jobInfo.contact_name;
+
+  const modal = document.getElementById("sfcModal");
+  modal.hidden = false;
+  sfcBarMode("form");
+  const body = document.getElementById("sfcBody");
+  body.innerHTML = `<p class="sfc-note">Pulling SFC pricing…</p>`;
+  try {
+    await fetchLivePricing();
+  } catch (e) {
+    body.innerHTML = `<p class="sfc-note sfc-error">${esc(e.message || "Could not reach the pricing service.")}</p>`;
+    return;
+  }
+  for (const g of groups) {
+    if (sfc.measurements[g.trade] == null) sfc.measurements[g.trade] = suggestMeasurement(g.items, SFC_TRADE_UOM[g.trade]);
+  }
+  renderSfcForm(groups);
+}
+
+function sfcBarMode(mode) {
+  document.getElementById("sfcBackBtn").hidden = mode !== "estimate";
+  document.getElementById("sfcPrintBtn").hidden = mode !== "estimate";
+}
+
+// Step 1 — one measurement per applicable trade, plus client + target profit.
+function renderSfcForm(groups) {
+  const rows = groups
+    .map((g) => {
+      const uom = SFC_TRADE_UOM[g.trade];
+      const rate = sfcRateFor(g.trade);
+      const meas = sfc.measurements[g.trade];
+      const rateHTML = rate
+        ? `<span class="sfc-rate"><b>${fmtRate(rate.cost.median)}</b> / ${esc(uom)} <em>· mat ${fmtRate(rate.materials.median)} · labor ${fmtRate(rate.labor.median)} · ${rate.n} jobs</em></span>`
+        : `<span class="sfc-rate"><em>no SFC rate yet</em></span>`;
+      return `
+      <tr>
+        <td><span class="trade-cell"><span class="trade-swatch" style="background:${g.color}"></span>${esc(g.trade)}</span></td>
+        <td class="num">${fmtUSD(g.rcv)}</td>
+        <td class="num">
+          <input class="input sfc-meas" type="number" min="0" step="0.01" inputmode="decimal"
+                 data-trade="${esc(g.trade)}" value="${meas != null ? esc(meas) : ""}" placeholder="0" />
+          <span class="uom">${esc(uom)}</span>
+        </td>
+        <td>${rateHTML}</td>
+      </tr>`;
+    })
+    .join("");
+
+  document.getElementById("sfcBody").innerHTML = `
+    <p class="sfc-note">Confirm the measurement for each trade on this claim. Suggestions come from the largest parsed quantity in that unit — check them against the roof report.</p>
+    <div class="sfc-controls">
+      <label>Client <input id="sfcClient" class="input input-wide" type="text" value="${esc(sfc.client)}" placeholder="Homeowner" /></label>
+      <label>Target profit <input id="sfcTarget" class="input" type="number" min="0" max="90" step="1" value="${esc(sfc.targetPct)}" /> %</label>
+    </div>
+    <table class="sfc-form">
+      <thead><tr><th>Trade</th><th class="num">Ins. pay out (RCV)</th><th class="num">Measurement</th><th>SFC cost history</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div class="sfc-form-foot"><button id="sfcBuildBtn" class="btn btn-primary">Build estimate →</button></div>`;
+
+  document.getElementById("sfcBuildBtn").addEventListener("click", () => {
+    for (const inp of document.querySelectorAll(".sfc-meas")) {
+      const v = Number(inp.value);
+      sfc.measurements[inp.dataset.trade] = v > 0 ? v : null;
+    }
+    sfc.client = document.getElementById("sfcClient").value.trim();
+    const t = Number(document.getElementById("sfcTarget").value);
+    sfc.targetPct = Number.isFinite(t) ? Math.max(0, Math.min(90, t)) : 33;
+    renderSfcEstimate(groups);
+  });
+}
+
+// Step 2 — the estimate: insurance pay out vs SFC net cost, target revenue, current profit %.
+function renderSfcEstimate(groups) {
+  const md = state.summary || {};
+  const crDate = md.date_of_loss || "—";
+  const client = sfc.client || "—";
+  const keep = 1 - sfc.targetPct / 100;
+
+  const rows = groups.map((g) => {
+    const uom = SFC_TRADE_UOM[g.trade];
+    const rate = sfcRateFor(g.trade);
+    const meas = sfc.measurements[g.trade];
+    const priced = !!rate && meas != null && meas > 0;
+    const cost = priced ? rate.cost.median * meas : null;
+    const target = priced && keep > 0.005 ? cost / keep : null;
+    const pct = priced && g.rcv > 0 ? ((g.rcv - cost) / g.rcv) * 100 : null;
+    let cls = "sfc-norate", verdict = rate ? "enter measurement" : "no SFC rate yet";
+    if (priced) {
+      if (pct >= sfc.targetPct) { cls = "sfc-good"; verdict = "on target"; }
+      else if (pct >= 0) { cls = "sfc-warn"; verdict = `below ${sfc.targetPct}% target`; }
+      else { cls = "sfc-bad"; verdict = "loses money — do not do"; }
+    }
+    return { g, uom, rate, meas, priced, cost, target, pct, cls, verdict };
+  });
+
+  const priced = rows.filter((r) => r.priced);
+  const tot = priced.reduce((a, r) => { a.rcv += r.g.rcv; a.cost += r.cost; a.target += r.target || 0; return a; }, { rcv: 0, cost: 0, target: 0 });
+  const totPct = tot.rcv > 0 ? ((tot.rcv - tot.cost) / tot.rcv) * 100 : null;
+  const totCls = totPct == null ? "sfc-norate" : totPct >= sfc.targetPct ? "sfc-good" : totPct >= 0 ? "sfc-warn" : "sfc-bad";
+
+  const body = rows
+    .map((r) => `
+      <tr class="${r.cls}">
+        <td class="left">${esc(client)}</td>
+        <td class="left"><span class="trade-cell"><span class="trade-swatch" style="background:${r.g.color}"></span>${esc(r.g.trade)}</span>
+          <span class="sfc-rate"><em>${r.meas != null ? `${esc(r.meas)} ${esc(r.uom)}` : ""}</em></span></td>
+        <td>${esc(crDate)}</td>
+        <td>${fmtUSD(r.g.rcv)}</td>
+        <td class="${r.priced ? "" : "muted"}">${r.priced ? fmtUSD(r.cost) : "—"}</td>
+        <td class="${r.priced ? "" : "muted"}">${r.priced ? fmtUSD(r.target) : "—"}</td>
+        <td class="pct">${r.priced ? fmtPct1(r.pct) : "—"}<span class="verdict">${esc(r.verdict)}</span></td>
+      </tr>`)
+    .join("");
+
+  const ratesUsed = rows
+    .filter((r) => r.rate)
+    .map((r) => `<b>${esc(r.g.trade)}</b> ${fmtRate(r.rate.cost.median)}/${esc(r.uom)} (materials ${fmtRate(r.rate.materials.median)}, labor ${fmtRate(r.rate.labor.median)}, ${r.rate.n} jobs)`)
+    .join(" · ");
+  const meta = sfc.pricing && sfc.pricing.meta ? sfc.pricing.meta : {};
+
+  document.getElementById("sfcBody").innerHTML = `
+    <section class="page">
+      <div class="doc-head">
+        <p class="doc-eyebrow">SFC Estimate · Insurance vs SFC Pricing</p>
+        <h1 class="doc-title">${esc(client !== "—" ? client : "SFC Estimate")}</h1>
+        <p class="doc-sub">${esc(md.insurance_company || "")}${md.insurance_company && md.claim_number ? " · " : ""}${md.claim_number ? "Claim #" + esc(md.claim_number) : ""}</p>
+      </div>
+      <table class="summary sfc-est">
+        <thead><tr>
+          <th class="left">Client</th><th class="left">Trade</th><th>C.R. Date</th>
+          <th>Ins Pay Out</th><th>SFC (Net Cost)</th><th>Target Revenue</th><th>Current Profit %</th>
+        </tr></thead>
+        <tbody>${body}</tbody>
+        <tfoot><tr class="${totCls}">
+          <td class="left">Total</td><td class="left">${priced.length} priced trade${priced.length === 1 ? "" : "s"}</td><td></td>
+          <td>${fmtUSD(tot.rcv)}</td><td>${fmtUSD(tot.cost)}</td><td>${fmtUSD(tot.target)}</td>
+          <td class="pct">${fmtPct1(totPct)}</td>
+        </tr></tfoot>
+      </table>
+      <p class="sfc-rates">Target revenue leaves ${esc(sfc.targetPct)}% of revenue after net cost. SFC net cost = median cost per unit × measurement, from ${esc(String(meta.count || ""))} jobs on the Live Pricing page${meta.date_from ? ` (${esc(meta.date_from)} → ${esc(meta.date_to || "")})` : ""}. Rates used: ${ratesUsed || "none"}.</p>
+    </section>`;
+  sfcBarMode("estimate");
+  document.getElementById("sfcModal").querySelector(".modal-body").scrollTop = 0;
+}
+
+function closeSfcModal() {
+  document.getElementById("sfcModal").hidden = true;
+}
+
 // ------------------------------ Wiring ----------------------------------- //
 function init() {
   // Job # pickers (empty-state + toolbar). Both share state.jobInfo.
@@ -1335,6 +1557,13 @@ function init() {
     );
   });
 
+  // SFC Estimate: measurements → pricing vs insurance. Back returns to the form.
+  document.getElementById("sfcBtn").addEventListener("click", openSfcEstimate);
+  document.getElementById("sfcBackBtn").addEventListener("click", () => { sfcBarMode("form"); renderSfcForm(sfcApplicableGroups()); });
+  document.getElementById("sfcPrintBtn").addEventListener("click", () => window.print());
+  document.getElementById("sfcCloseBtn").addEventListener("click", closeSfcModal);
+  document.getElementById("sfcBackdrop").addEventListener("click", closeSfcModal);
+
   // Summary modal controls: download, and close via ✕ / backdrop / Escape.
   document.getElementById("downloadModalBtn").addEventListener("click", () => window.print());
   document.getElementById("closeModalBtn").addEventListener("click", closeSummaryModal);
@@ -1354,6 +1583,7 @@ function init() {
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
     if (!document.getElementById("discrepancyModal").hidden) return closeDiscrepancyModal();
+    if (!document.getElementById("sfcModal").hidden) return closeSfcModal();
     if (!document.getElementById("summaryModal").hidden) closeSummaryModal();
   });
 
