@@ -1394,22 +1394,22 @@ function renderSfcForm(groups) {
       const bid = sfcIsBid(g.trade);
       // Roof / siding / gutters are LOCKED to the history rate; bid items take a typed cost.
       const rateHTML = bid
-        ? `<input class="input sfc-bid" type="number" min="0" step="1" inputmode="decimal"
-                  data-trade="${esc(g.trade)}" value="${sfc.bids[g.trade] != null ? esc(sfc.bids[g.trade]) : ""}" placeholder="SFC cost" />
-           <span class="uom">bid</span>`
+        ? `<span class="field"><input class="input sfc-bid" type="number" min="0" step="1" inputmode="decimal"
+                  data-trade="${esc(g.trade)}" value="${sfc.bids[g.trade] != null ? esc(sfc.bids[g.trade]) : ""}" placeholder="$" />
+           <span class="uom">bid</span></span>`
         : `<span class="sfc-rate"><b>${fmtRate(rate.cost.median)}</b> / ${esc(uom)}</span>`;
       const on = sfc.included[g.trade] !== false;
       return `
       <tr class="${on ? "" : "sfc-off"}">
         <td class="check"><input class="sfc-on" type="checkbox" data-trade="${esc(g.trade)}" ${on ? "checked" : ""} title="Include in this production" /></td>
-        <td><span class="trade-cell"><span class="trade-swatch" style="background:${g.color}"></span>${esc(g.trade)}</span></td>
-        <td class="num">${fmtUSD(g.rcv)}</td>
-        <td class="num">
+        <td class="trade"><span class="trade-cell"><span class="trade-swatch" style="background:${g.color}"></span>${esc(g.trade)}</span></td>
+        <td class="num rcv">${fmtUSD(g.rcv)}</td>
+        <td class="num meas"><span class="field">
           <input class="input sfc-meas" type="number" min="0" step="0.01" inputmode="decimal"
                  data-trade="${esc(g.trade)}" value="${meas != null ? esc(meas) : ""}" placeholder="0" />
           <span class="uom">${esc(uom)}</span>
-        </td>
-        <td>${rateHTML}</td>
+        </span></td>
+        <td class="cost">${rateHTML}</td>
       </tr>`;
     })
     .join("");
@@ -1419,7 +1419,7 @@ function renderSfcForm(groups) {
       <label>Client <input id="sfcClient" class="input input-wide" type="text" value="${esc(sfc.client)}" placeholder="Homeowner" /></label>
     </div>
     <table class="sfc-form">
-      <thead><tr><th class="check">On</th><th>Trade</th><th class="num">Ins. pay out (RCV)</th><th class="num">Measurement</th><th>SFC cost</th></tr></thead>
+      <thead><tr><th class="check">On</th><th class="trade">Trade</th><th class="num rcv">Insurance pays</th><th class="num meas">Measurement</th><th class="cost">SFC cost</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
     <div class="sfc-form-foot"><button id="sfcBuildBtn" class="btn btn-primary">Build estimate →</button></div>`;

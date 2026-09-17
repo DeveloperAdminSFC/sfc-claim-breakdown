@@ -404,22 +404,34 @@ body {
 .btn-sfc:hover:not(:disabled) { background: #eef2f7; }
 .sfc-note { font-size: 13px; color: var(--ink-soft); margin: 0 0 12px; line-height: 1.5; }
 .sfc-error { color: var(--neg); font-weight: 600; }
-.sfc-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin: 0 0 14px; }
-.sfc-controls label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-soft); }
-.sfc-controls .input { width: 72px; text-align: right; font-variant-numeric: tabular-nums; }
-.sfc-controls .input-wide { width: 220px; text-align: left; }
-.sfc-form { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 14px; }
-.sfc-form th { text-align: left; font-size: 10.5px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-faint); padding: 6px 10px; border-bottom: 1px solid var(--rule-strong); }
-.sfc-form td { padding: 8px 10px; border-bottom: 1px solid var(--rule); vertical-align: middle; }
-.sfc-form td.num, .sfc-form th.num { text-align: right; font-variant-numeric: tabular-nums; }
-.sfc-form .input { width: 110px; text-align: right; font-variant-numeric: tabular-nums; }
-.sfc-form .uom { color: var(--ink-faint); font-size: 12px; margin-left: 6px; }
-.sfc-form th.check, .sfc-form td.check { width: 34px; text-align: center; }
-.sfc-form .sfc-on { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
-.sfc-form tr.sfc-off td:not(.check) { opacity: 0.4; }
-.sfc-rate { font-size: 12px; color: var(--ink-soft); white-space: nowrap; }
-.sfc-rate em { font-style: normal; color: var(--ink-faint); }
-.sfc-form-foot { display: flex; justify-content: flex-end; gap: 8px; }
+.sfc-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; margin: 4px 0 18px; }
+.sfc-controls label { display: inline-flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 600; color: var(--ink-soft); }
+.sfc-controls .input { height: 42px; font-size: 16px; }
+.sfc-controls .input-wide { width: 320px; text-align: left; }
+
+/* Measurements form — fixed column widths so every input lines up, larger type. */
+.sfc-form { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 16px; margin-bottom: 18px; table-layout: fixed; }
+.sfc-form th { text-align: left; font-size: 11px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--ink-faint); padding: 8px 12px 10px; border-bottom: 2px solid var(--rule-strong); }
+.sfc-form td { padding: 12px 12px; border-bottom: 1px solid var(--rule); vertical-align: middle; }
+.sfc-form tbody tr:last-child td { border-bottom: 0; }
+.sfc-form tbody tr:hover td { background: var(--wash); }
+.sfc-form th.check, .sfc-form td.check { width: 48px; text-align: center; padding-left: 4px; padding-right: 4px; }
+.sfc-form th.num, .sfc-form td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.sfc-form th.trade, .sfc-form td.trade { width: 22%; }
+.sfc-form th.rcv, .sfc-form td.rcv { width: 20%; }
+.sfc-form th.meas, .sfc-form td.meas { width: 26%; }
+.sfc-form .trade-cell { font-weight: 700; font-size: 16px; color: var(--ink); }
+.sfc-form td.rcv { font-weight: 600; color: var(--ink); }
+.sfc-form .field { display: inline-flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: nowrap; white-space: nowrap; }
+.sfc-form .input { width: 118px; min-width: 96px; height: 42px; font-size: 17px; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+.sfc-form .uom { display: inline-block; width: 38px; color: var(--ink-faint); font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-align: left; }
+.sfc-form .sfc-on { width: 20px; height: 20px; accent-color: var(--accent); cursor: pointer; vertical-align: middle; }
+.sfc-form tr.sfc-off td:not(.check) { opacity: 0.35; }
+.sfc-rate { font-size: 16px; color: var(--ink); white-space: nowrap; }
+.sfc-rate b { font-size: 17px; }
+.sfc-rate em { font-style: normal; color: var(--ink-faint); font-size: 13px; }
+.sfc-form-foot { display: flex; justify-content: flex-end; gap: 8px; padding-top: 6px; }
+.sfc-form-foot .btn { height: 44px; padding: 0 22px; font-size: 15px; }
 /* Job P&L for the production manager: big numbers, one accent for margin. */
 .summary.sfc-est { font-size: 15px; table-layout: auto; }
 .summary.sfc-est thead th { font-size: 10.5px; padding: 8px 8px; white-space: normal; }
