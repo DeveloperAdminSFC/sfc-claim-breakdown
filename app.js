@@ -1278,7 +1278,7 @@ async function loadSample() {
 // largest parsed quantity in that trade's unit. Nothing persists.
 const SFC_TRADE_UOM = { ROOF: "SQ", SIDING: "SF", GUTTERS: "LF", PAINT: "SF", WINDOWS: "EA", FENCE: "LF", GARAGE: "SF", SOLAR: "PNL" };
 const SFC_MIN_JOBS = 3; // fewer measured jobs than this → "no SFC rate yet"
-let sfc = { pricing: null, measurements: {}, targetPct: 33, client: "" };
+let sfc = { pricing: null, measurements: {}, targetPct: 33, client: "", perUnit: false, groups: [] };
 
 // "28.40 SQ" / "1,234.5 SF" → { value, unit }; null when the quantity has no unit.
 function parseQuantity(q) {
@@ -1352,7 +1352,9 @@ async function openSfcEstimate() {
 
 function sfcBarMode(mode) {
   document.getElementById("sfcBackBtn").hidden = mode !== "estimate";
+  document.getElementById("sfcUomBtn").hidden = mode !== "estimate";
   document.getElementById("sfcPrintBtn").hidden = mode !== "estimate";
+  document.getElementById("sfcUomBtn").setAttribute("aria-pressed", String(sfc.perUnit));
 }
 
 // Step 1 — one measurement per applicable trade, plus client + target profit.
@@ -1405,10 +1407,15 @@ function renderSfcForm(groups) {
 
 // Step 2 — the estimate: insurance pay out vs SFC net cost, target revenue, current profit %.
 function renderSfcEstimate(groups) {
+  sfc.groups = groups;
   const md = state.summary || {};
   const crDate = md.date_of_loss || "—";
   const client = sfc.client || "—";
   const keep = 1 - sfc.targetPct / 100;
+  // Per-UOM view: every dollar figure ÷ the trade's measurement ("$532 / SQ").
+  const per = sfc.perUnit;
+  const money = (n, meas, uom) =>
+    per ? (meas > 0 ? `${fmtRate(n / meas)}<span class="per">/ ${esc(uom)}</span>` : "—") : fmtUSD(n);
 
   const rows = groups.map((g) => {
     const uom = SFC_TRADE_UOM[g.trade];
@@ -1430,6 +1437,8 @@ function renderSfcEstimate(groups) {
   const priced = rows.filter((r) => r.priced);
   const tot = priced.reduce((a, r) => { a.rcv += r.g.rcv; a.cost += r.cost; a.target += r.target || 0; return a; }, { rcv: 0, cost: 0, target: 0 });
   const totPct = tot.rcv > 0 ? ((tot.rcv - tot.cost) / tot.rcv) * 100 : null;
+  // Whole-claim per-unit basis = roof squares (same convention as Live Pricing's TOTAL row).
+  const roofSq = Number(sfc.measurements.ROOF) || 0;
   const totCls = totPct == null ? "sfc-norate" : totPct >= sfc.targetPct ? "sfc-good" : totPct >= 0 ? "sfc-warn" : "sfc-bad";
 
   const body = rows
@@ -1439,9 +1448,9 @@ function renderSfcEstimate(groups) {
         <td class="left"><span class="trade-cell"><span class="trade-swatch" style="background:${r.g.color}"></span>${esc(r.g.trade)}</span>
           <span class="sfc-rate"><em>${r.meas != null ? `${esc(r.meas)} ${esc(r.uom)}` : ""}</em></span></td>
         <td>${esc(crDate)}</td>
-        <td>${fmtUSD(r.g.rcv)}</td>
-        <td class="${r.priced ? "" : "muted"}">${r.priced ? fmtUSD(r.cost) : "—"}</td>
-        <td class="${r.priced ? "" : "muted"}">${r.priced ? fmtUSD(r.target) : "—"}</td>
+        <td>${money(r.g.rcv, r.meas, r.uom)}</td>
+        <td class="${r.priced ? "" : "muted"}">${r.priced ? money(r.cost, r.meas, r.uom) : "—"}</td>
+        <td class="${r.priced ? "" : "muted"}">${r.priced ? money(r.target, r.meas, r.uom) : "—"}</td>
         <td class="pct">${r.priced ? fmtPct1(r.pct) : "—"}<span class="verdict">${esc(r.verdict)}</span></td>
       </tr>`)
     .join("");
@@ -1466,8 +1475,8 @@ function renderSfcEstimate(groups) {
         </tr></thead>
         <tbody>${body}</tbody>
         <tfoot><tr class="${totCls}">
-          <td class="left">Total</td><td class="left">${priced.length} priced trade${priced.length === 1 ? "" : "s"}</td><td></td>
-          <td>${fmtUSD(tot.rcv)}</td><td>${fmtUSD(tot.cost)}</td><td>${fmtUSD(tot.target)}</td>
+          <td class="left">Total</td><td class="left">${priced.length} priced trade${priced.length === 1 ? "" : "s"}${per ? " · per roof SQ" : ""}</td><td></td>
+          <td>${money(tot.rcv, roofSq, "SQ")}</td><td>${money(tot.cost, roofSq, "SQ")}</td><td>${money(tot.target, roofSq, "SQ")}</td>
           <td class="pct">${fmtPct1(totPct)}</td>
         </tr></tfoot>
       </table>
@@ -1563,6 +1572,11 @@ function init() {
   // SFC Estimate: measurements → pricing vs insurance. Back returns to the form.
   document.getElementById("sfcBtn").addEventListener("click", openSfcEstimate);
   document.getElementById("sfcBackBtn").addEventListener("click", () => { sfcBarMode("form"); renderSfcForm(sfcApplicableGroups()); });
+  document.getElementById("sfcUomBtn").addEventListener("click", () => {
+    sfc.perUnit = !sfc.perUnit;
+    document.getElementById("sfcUomBtn").setAttribute("aria-pressed", String(sfc.perUnit));
+    if (sfc.groups.length) renderSfcEstimate(sfc.groups);
+  });
   document.getElementById("sfcPrintBtn").addEventListener("click", () => window.print());
   document.getElementById("sfcCloseBtn").addEventListener("click", closeSfcModal);
   document.getElementById("sfcBackdrop").addEventListener("click", closeSfcModal);
