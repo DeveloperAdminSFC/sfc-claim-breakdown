@@ -1278,20 +1278,21 @@ const SFC_TRADE_UOM = { ROOF: "SQ", SIDING: "SF", GUTTERS: "LF", PAINT: "SF", WI
 const SFC_MIN_JOBS = 3; // fewer measured jobs than this → "no SFC rate yet"
 // Bid items: no usable history, the estimator types SFC's cost for the trade. Any other
 // trade whose history is too thin gets the same box.
-const SFC_BID_TRADES = new Set(["WINDOWS", "GARAGE", "SOLAR"]);
+const SFC_BID_TRADES = new Set(["WINDOWS", "GARAGE", "SOLAR", "PAINT"]);
 // included: trade -> false when switched off for this production (supplements add and
 // finish trades at different times, so the estimate is rebuilt per production).
-let sfc = { pricing: null, measurements: {}, bids: {}, included: {}, client: "", perUnit: false, groups: [], rates: null };
+// rateEdits: trade -> $/unit typed over the history median (the base estimate is the
+// median; slope and other factors get layered on top of these inputs later).
+let sfc = { pricing: null, measurements: {}, bids: {}, rateEdits: {}, included: {}, client: "", perUnit: false, groups: [], rates: null };
 
 // True when the trade is priced by a typed bid rather than measurement × rate.
 function sfcIsBid(trade) {
   return SFC_BID_TRADES.has(trade) || !sfcRateFor(trade);
 }
 const SFC_TARGET_MARGIN = 33; // required gross margin, % of revenue
-// No roof in the production (siding-only, gutters-only…): job costs and overhead are
-// charged as a share of the pay out instead of per roof SQ. Other job costs at a flat
-// 20% (Yash's rule; history says 20.5%), overhead at the P&L's actual share.
-const SFC_OTHER_PCT_NO_ROOF = 20;
+// Other job costs (every COGS line that is not labor or materials) are always a flat
+// 20% of the included pay out — never per square (Yash's rule; history says 20.5%).
+const SFC_OTHER_PCT = 20;
 
 // "28.40 SQ" / "1,234.5 SF" → { value, unit }; null when the quantity has no unit.
 function parseQuantity(q) {
@@ -1393,11 +1394,15 @@ function renderSfcForm(groups) {
       const rate = sfcRateFor(g.trade);
       const meas = sfc.measurements[g.trade];
       const bid = sfcIsBid(g.trade);
+      const rateVal = sfc.rateEdits[g.trade] != null ? sfc.rateEdits[g.trade] : rate ? Math.round(rate.cost.median * 100) / 100 : "";
       const rateHTML = bid
         ? `<input class="input sfc-bid" type="number" min="0" step="1" inputmode="decimal"
                   data-trade="${esc(g.trade)}" value="${sfc.bids[g.trade] != null ? esc(sfc.bids[g.trade]) : ""}" placeholder="SFC cost" />
            <span class="uom">bid</span>`
-        : `<span class="sfc-rate"><b>${fmtRate(rate.cost.median)}</b> / ${esc(uom)} <em>· mat ${fmtRate(rate.materials.median)} · labor ${fmtRate(rate.labor.median)} · ${rate.n} jobs</em></span>`;
+        : `<input class="input sfc-rate-in" type="number" min="0" step="0.01" inputmode="decimal"
+                  data-trade="${esc(g.trade)}" value="${esc(rateVal)}" />
+           <span class="uom">/ ${esc(uom)}</span>
+           <span class="sfc-rate"><em>mat ${fmtRate(rate.materials.median)} · labor ${fmtRate(rate.labor.median)} · ${rate.n} jobs</em></span>`;
       const on = sfc.included[g.trade] !== false;
       return `
       <tr class="${on ? "" : "sfc-off"}">
@@ -1442,6 +1447,10 @@ function renderSfcForm(groups) {
       const v = Number(inp.value);
       sfc.bids[inp.dataset.trade] = v > 0 ? v : null;
     }
+    for (const inp of document.querySelectorAll(".sfc-rate-in")) {
+      const v = Number(inp.value);
+      sfc.rateEdits[inp.dataset.trade] = v > 0 ? v : null;
+    }
     for (const inp of document.querySelectorAll(".sfc-on")) sfc.included[inp.dataset.trade] = inp.checked;
     sfc.client = document.getElementById("sfcClient").value.trim();
     renderSfcEstimate(groups);
@@ -1468,8 +1477,9 @@ function renderSfcEstimate(allGroups) {
     const rate = sfcRateFor(g.trade);
     const meas = sfc.measurements[g.trade];
     const bid = sfcIsBid(g.trade) ? sfc.bids[g.trade] : null;
-    const priced = bid != null ? bid > 0 : !!rate && meas != null && meas > 0;
-    const cost = !priced ? null : bid != null ? bid : rate.cost.median * meas;
+    const perUnitRate = rate ? (sfc.rateEdits[g.trade] != null ? sfc.rateEdits[g.trade] : rate.cost.median) : null;
+    const priced = bid != null ? bid > 0 : perUnitRate != null && meas != null && meas > 0;
+    const cost = !priced ? null : bid != null ? bid : perUnitRate * meas;
     const profit = priced ? g.rcv - cost : null;
     const pct = priced && g.rcv > 0 ? (profit / g.rcv) * 100 : null;
     return { g, uom, rate, meas, bid, priced, cost, profit, pct };
@@ -1478,13 +1488,11 @@ function renderSfcEstimate(allGroups) {
   const payout = priced.reduce((a, r) => a + r.g.rcv, 0);
   const tradeCost = priced.reduce((a, r) => a + r.cost, 0);
 
-  // Other job costs and overhead: per roof SQ from history when the production has a
-  // priced roof; otherwise a share of the pay out (20% other, actual overhead %).
-  const r = sfc.rates;
+  // Other job costs: always 20% of the included pay out. Roof squares only feed the
+  // per-unit view of the job-wide rows.
   const roofRow = rows.find((x) => x.g.trade === "ROOF" && x.priced && x.meas > 0);
   const roofSq = roofRow ? roofRow.meas : 0;
-  const perSq = roofSq > 0 && r.otherPerSq != null && r.ohPerSq != null;
-  const other = perSq ? r.otherPerSq * roofSq : payout * (SFC_OTHER_PCT_NO_ROOF / 100);
+  const other = payout * (SFC_OTHER_PCT / 100);
 
   // Gross profit at the insurance pay out (overhead is not charged to the job)
   const totalCost = tradeCost + other;
@@ -1510,14 +1518,13 @@ function renderSfcEstimate(allGroups) {
       </tr>`)
     .join("");
 
-  // Dollar view: just the amount. Per-UOM view: the roof squares and the per-SQ figure
-  // (or the % of pay out when the production has no roof).
+  // Dollar view: just the amount. Per-UOM view: the share of pay out it represents.
   const sqRow = (label, amount, pct) => `
       <tr>
         <td class="left">${esc(label)}</td>
-        <td class="center">${per && perSq ? `${esc(roofSq)} SQ` : ""}</td>
         <td></td>
-        <td>${per ? (perSq ? cell(amount, roofSq, "SQ") : `${esc(pct)}%`) : money0(amount)}</td>
+        <td></td>
+        <td>${per ? `${esc(pct)}%` : money0(amount)}</td>
         <td></td>
         <td></td>
       </tr>`;
@@ -1546,7 +1553,7 @@ function renderSfcEstimate(allGroups) {
         </tr></thead>
         <tbody>
           ${tradeRows}
-          ${sqRow("Other Job Costs", other, SFC_OTHER_PCT_NO_ROOF)}
+          ${sqRow("Other Job Costs", other, SFC_OTHER_PCT)}
         </tbody>
         <tfoot>
           ${jobRow("Job Summary", "sfc-net", payout, totalCost, netPct, pctCls(netPct))}
