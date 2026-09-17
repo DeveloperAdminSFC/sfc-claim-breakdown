@@ -1526,9 +1526,68 @@ function renderSfcEstimate(groups) {
           ${jobRow("Job Summary", "sfc-net", payout, totalCost, netPct, pctCls(netPct))}
         </tfoot>
       </table>
-    </section>`;
+    </section>
+    ${chargePageHTML(rows, priced, tradeCost, other + overhead, payout, per)}`;
   sfcBarMode("estimate");
   document.getElementById("sfcModal").querySelector(".modal-body").scrollTop = 0;
+}
+
+// Page 2 — what to charge, trade by trade. Other job costs and overhead are spread
+// across the priced trades in proportion to their direct cost, so the per-trade
+// prices add up to the full-job prices on page 1.
+function chargePageHTML(rows, priced, tradeCost, jobCosts, payout, per) {
+  const money0 = (n) => (n == null ? "—" : Number(n).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }));
+  const cell = (n, meas, uom) => (per ? (meas > 0 ? `${fmtRate(n / meas)}<span class="per">/${esc(uom)}</span>` : "—") : money0(n));
+  const roofSq = Number(sfc.measurements.ROOF) || 0;
+  const load = tradeCost > 0 ? jobCosts / tradeCost : 0; // job costs per $1 of trade cost
+  const priceAt = (cost, m) => (cost * (1 + load)) / (1 - m / 100);
+
+  const lines = rows.map((x) => {
+    const minP = x.priced ? priceAt(x.cost, SFC_MIN_MARGIN) : null;
+    const tgtP = x.priced ? priceAt(x.cost, SFC_TARGET_MARGIN) : null;
+    return { ...x, minP, tgtP, more: x.priced ? tgtP - x.g.rcv : null };
+  });
+  const tMin = priced.reduce((a, x) => a + priceAt(x.cost, SFC_MIN_MARGIN), 0);
+  const tTgt = priced.reduce((a, x) => a + priceAt(x.cost, SFC_TARGET_MARGIN), 0);
+  const tMore = tTgt - payout;
+  const cls = (n) => (n == null ? "" : n > 0 ? "neg" : "pos");
+
+  const body = lines
+    .map((x) => `
+      <tr>
+        <td class="left">${esc(x.g.trade)}</td>
+        <td class="center">${x.meas != null ? `${esc(x.meas)} ${esc(x.uom)}` : "—"}</td>
+        <td>${cell(x.g.rcv, x.meas, x.uom)}</td>
+        <td>${x.priced ? cell(x.minP, x.meas, x.uom) : "—"}</td>
+        <td>${x.priced ? cell(x.tgtP, x.meas, x.uom) : "—"}</td>
+        <td class="${cls(x.more)}">${x.priced ? cell(x.more, x.meas, x.uom) : "—"}</td>
+      </tr>`)
+    .join("");
+
+  return `
+    <section class="page">
+      <div class="doc-head">
+        <p class="doc-eyebrow">SFC Estimate · What to Charge</p>
+        <h1 class="doc-title sfc-title">${esc(sfc.client || "SFC Estimate")}</h1>
+        <p class="doc-sub">Insurance pay out vs SFC price by trade</p>
+      </div>
+      <table class="summary sfc-est">
+        <thead><tr>
+          <th class="left">Trade</th><th class="center">Measurement</th>
+          <th>Insurance pays</th><th>SFC Minimum (${SFC_MIN_MARGIN}%)</th><th>SFC Target (${SFC_TARGET_MARGIN}%)</th><th>Charge more</th>
+        </tr></thead>
+        <tbody>${body}</tbody>
+        <tfoot>
+          <tr class="sfc-net">
+            <td class="left" colspan="2">Full job</td>
+            <td>${cell(payout, roofSq, "SQ")}</td>
+            <td>${cell(tMin, roofSq, "SQ")}</td>
+            <td>${cell(tTgt, roofSq, "SQ")}</td>
+            <td class="${cls(tMore)}">${cell(tMore, roofSq, "SQ")}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </section>`;
 }
 
 function closeSfcModal() {
