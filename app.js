@@ -1458,10 +1458,6 @@ function renderSfcEstimate(groups) {
   const net = payout - totalCost;
   const netPct = payout > 0 ? (net / payout) * 100 : null;
 
-  // SFC prices for the full job: revenue that leaves the margin after every cost
-  const priceFor = (m) => totalCost / (1 - m / 100);
-  const minPrice = priceFor(SFC_MIN_MARGIN);
-  const targetPrice = priceFor(SFC_TARGET_MARGIN);
 
   // Per-unit view: the SFC rate column goes away (it IS the cost per unit) and every
   // figure carries its unit. Job-wide rows are per roof SQ.
@@ -1521,8 +1517,6 @@ function renderSfcEstimate(groups) {
           ${sqRow("Overhead PSQ", r.ohPerSq, r.ohPct, overhead)}
         </tbody>
         <tfoot>
-          ${jobRow(`SFC Bare Minimum Price (${SFC_MIN_MARGIN}%)`, "sfc-price sfc-price-first", minPrice, totalCost, SFC_MIN_MARGIN, "pos")}
-          ${jobRow(`SFC Target Price (${SFC_TARGET_MARGIN}%)`, "sfc-price", targetPrice, totalCost, SFC_TARGET_MARGIN, "pos")}
           ${jobRow("Job Summary", "sfc-net", payout, totalCost, netPct, pctCls(netPct))}
         </tfoot>
       </table>
