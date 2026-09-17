@@ -1429,7 +1429,6 @@ function renderSfcEstimate(groups) {
   })();
   const per = sfc.perUnit;
   const money0 = (n) => (n == null ? "—" : Number(n).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }));
-  const money = (n, meas) => (per ? (meas > 0 ? fmtRate(n / meas) : "—") : money0(n));
   const pctCls = (pct) => (pct == null ? "" : pct >= SFC_TARGET_MARGIN ? "pos" : "neg");
 
   // Trades
@@ -1464,15 +1463,21 @@ function renderSfcEstimate(groups) {
   const minPrice = priceFor(SFC_MIN_MARGIN);
   const targetPrice = priceFor(SFC_TARGET_MARGIN);
 
+  // Per-unit view: the SFC rate column goes away (it IS the cost per unit) and every
+  // figure carries its unit. Job-wide rows are per roof SQ.
+  const unit = (n, meas, uom) => (meas > 0 ? `${fmtRate(n / meas)}<span class="per">/${esc(uom)}</span>` : "—");
+  const cell = (n, meas, uom) => (per ? unit(n, meas, uom) : money0(n));
+  const span = per ? 2 : 3;
+
   const tradeRows = rows
     .map((x) => `
       <tr>
         <td class="left">${esc(x.g.trade)}</td>
         <td class="center">${x.meas != null ? `${esc(x.meas)} ${esc(x.uom)}` : "—"}</td>
-        <td class="center">${x.rate ? `${fmtRate(x.rate.cost.median)} / ${esc(x.uom)}` : "—"}</td>
-        <td>${money(x.g.rcv, x.meas)}</td>
-        <td>${x.priced ? money(x.cost, x.meas) : "—"}</td>
-        <td class="${pctCls(x.pct)}">${x.priced ? money(x.profit, x.meas) : "—"}</td>
+        ${per ? "" : `<td class="center">${x.rate ? `${fmtRate(x.rate.cost.median)} / ${esc(x.uom)}` : "—"}</td>`}
+        <td>${cell(x.g.rcv, x.meas, x.uom)}</td>
+        <td>${x.priced ? cell(x.cost, x.meas, x.uom) : "—"}</td>
+        <td class="${pctCls(x.pct)}">${x.priced ? cell(x.profit, x.meas, x.uom) : "—"}</td>
         <td class="${pctCls(x.pct)}">${x.priced ? fmtPct1(x.pct) : "—"}</td>
       </tr>`)
     .join("");
@@ -1481,11 +1486,21 @@ function renderSfcEstimate(groups) {
       <tr>
         <td class="left">${esc(label)}</td>
         <td class="center">${perSq ? `${esc(roofSq)} SQ` : ""}</td>
-        <td class="center">${perSq ? `${fmtRate(ratePerSq)} / SQ` : `${esc(pct)}%`}</td>
+        ${per ? "" : `<td class="center">${perSq ? `${fmtRate(ratePerSq)} / SQ` : `${esc(pct)}%`}</td>`}
         <td></td>
-        <td>${money(amount, roofSq)}</td>
+        <td>${cell(amount, roofSq, "SQ")}</td>
         <td></td>
         <td></td>
+      </tr>`;
+
+  // Full-job rows: revenue | cost | profit | margin, all filled in.
+  const jobRow = (label, cls, revenue, cost, marginPct, marginCls) => `
+      <tr class="${cls}">
+        <td class="left" colspan="${span}">${esc(label)}</td>
+        <td>${cell(revenue, roofSq, "SQ")}</td>
+        <td>${cell(cost, roofSq, "SQ")}</td>
+        <td class="${marginCls}">${cell(revenue - cost, roofSq, "SQ")}</td>
+        <td class="${marginCls}">${fmtPct1(marginPct)}</td>
       </tr>`;
 
   document.getElementById("sfcBody").innerHTML = `
@@ -1497,8 +1512,8 @@ function renderSfcEstimate(groups) {
       </div>
       <table class="summary sfc-est">
         <thead><tr>
-          <th class="left">Trade</th><th class="center">Measurement</th><th class="center">SFC rate</th>
-          <th>Insurance pays${per ? " / unit" : ""}</th><th>SFC cost${per ? " / unit" : ""}</th><th>Profit${per ? " / unit" : ""}</th><th>Margin</th>
+          <th class="left">Trade</th><th class="center">Measurement</th>${per ? "" : '<th class="center">SFC rate</th>'}
+          <th>Insurance pays</th><th>SFC cost</th><th>Profit</th><th>Margin</th>
         </tr></thead>
         <tbody>
           ${tradeRows}
@@ -1506,21 +1521,9 @@ function renderSfcEstimate(groups) {
           ${sqRow("Overhead PSQ", r.ohPerSq, r.ohPct, overhead)}
         </tbody>
         <tfoot>
-          <tr class="sfc-net">
-            <td class="left" colspan="3">Net Profit at Insurance Payout</td>
-            <td>${money0(payout)}</td><td>${money0(totalCost)}</td>
-            <td class="${pctCls(netPct)}">${money0(net)}</td><td class="${pctCls(netPct)}">${fmtPct1(netPct)}</td>
-          </tr>
-          <tr class="sfc-price">
-            <td class="left" colspan="3">SFC Bare Minimum Price (${SFC_MIN_MARGIN}%)</td>
-            <td>${money0(minPrice)}</td><td></td>
-            <td class="${payout >= minPrice ? "pos" : "neg"}">${money0(payout - minPrice)}</td><td></td>
-          </tr>
-          <tr class="sfc-price">
-            <td class="left" colspan="3">SFC Target Price (${SFC_TARGET_MARGIN}%)</td>
-            <td>${money0(targetPrice)}</td><td></td>
-            <td class="${payout >= targetPrice ? "pos" : "neg"}">${money0(payout - targetPrice)}</td><td></td>
-          </tr>
+          ${jobRow(`SFC Bare Minimum Price (${SFC_MIN_MARGIN}%)`, "sfc-price sfc-price-first", minPrice, totalCost, SFC_MIN_MARGIN, "pos")}
+          ${jobRow(`SFC Target Price (${SFC_TARGET_MARGIN}%)`, "sfc-price", targetPrice, totalCost, SFC_TARGET_MARGIN, "pos")}
+          ${jobRow("Job Summary", "sfc-net", payout, totalCost, netPct, pctCls(netPct))}
         </tfoot>
       </table>
     </section>`;
