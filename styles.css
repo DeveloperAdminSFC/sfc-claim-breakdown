@@ -413,8 +413,6 @@ body {
 .sfc-form td { padding: 8px 10px; border-bottom: 1px solid var(--rule); vertical-align: middle; }
 .sfc-form td.num, .sfc-form th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .sfc-form .input { width: 110px; text-align: right; font-variant-numeric: tabular-nums; }
-.sfc-form .sfc-rate-in { width: 96px; }
-.sfc-form .sfc-rate-in + .uom + .sfc-rate { display: block; margin-top: 3px; }
 .sfc-form .uom { color: var(--ink-faint); font-size: 12px; margin-left: 6px; }
 .sfc-form th.check, .sfc-form td.check { width: 34px; text-align: center; }
 .sfc-form .sfc-on { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }

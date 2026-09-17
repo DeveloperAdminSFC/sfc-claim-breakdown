@@ -1281,9 +1281,7 @@ const SFC_MIN_JOBS = 3; // fewer measured jobs than this → "no SFC rate yet"
 const SFC_BID_TRADES = new Set(["WINDOWS", "GARAGE", "SOLAR", "PAINT"]);
 // included: trade -> false when switched off for this production (supplements add and
 // finish trades at different times, so the estimate is rebuilt per production).
-// rateEdits: trade -> $/unit typed over the history median (the base estimate is the
-// median; slope and other factors get layered on top of these inputs later).
-let sfc = { pricing: null, measurements: {}, bids: {}, rateEdits: {}, included: {}, client: "", perUnit: false, groups: [], rates: null };
+let sfc = { pricing: null, measurements: {}, bids: {}, included: {}, client: "", perUnit: false, groups: [], rates: null };
 
 // True when the trade is priced by a typed bid rather than measurement × rate.
 function sfcIsBid(trade) {
@@ -1394,15 +1392,12 @@ function renderSfcForm(groups) {
       const rate = sfcRateFor(g.trade);
       const meas = sfc.measurements[g.trade];
       const bid = sfcIsBid(g.trade);
-      const rateVal = sfc.rateEdits[g.trade] != null ? sfc.rateEdits[g.trade] : rate ? Math.round(rate.cost.median * 100) / 100 : "";
+      // Roof / siding / gutters are LOCKED to the history rate; bid items take a typed cost.
       const rateHTML = bid
         ? `<input class="input sfc-bid" type="number" min="0" step="1" inputmode="decimal"
                   data-trade="${esc(g.trade)}" value="${sfc.bids[g.trade] != null ? esc(sfc.bids[g.trade]) : ""}" placeholder="SFC cost" />
            <span class="uom">bid</span>`
-        : `<input class="input sfc-rate-in" type="number" min="0" step="0.01" inputmode="decimal"
-                  data-trade="${esc(g.trade)}" value="${esc(rateVal)}" />
-           <span class="uom">/ ${esc(uom)}</span>
-           <span class="sfc-rate"><em>mat ${fmtRate(rate.materials.median)} · labor ${fmtRate(rate.labor.median)} · ${rate.n} jobs</em></span>`;
+        : `<span class="sfc-rate"><b>${fmtRate(rate.cost.median)}</b> / ${esc(uom)}</span>`;
       const on = sfc.included[g.trade] !== false;
       return `
       <tr class="${on ? "" : "sfc-off"}">
@@ -1447,10 +1442,6 @@ function renderSfcForm(groups) {
       const v = Number(inp.value);
       sfc.bids[inp.dataset.trade] = v > 0 ? v : null;
     }
-    for (const inp of document.querySelectorAll(".sfc-rate-in")) {
-      const v = Number(inp.value);
-      sfc.rateEdits[inp.dataset.trade] = v > 0 ? v : null;
-    }
     for (const inp of document.querySelectorAll(".sfc-on")) sfc.included[inp.dataset.trade] = inp.checked;
     sfc.client = document.getElementById("sfcClient").value.trim();
     renderSfcEstimate(groups);
@@ -1477,7 +1468,7 @@ function renderSfcEstimate(allGroups) {
     const rate = sfcRateFor(g.trade);
     const meas = sfc.measurements[g.trade];
     const bid = sfcIsBid(g.trade) ? sfc.bids[g.trade] : null;
-    const perUnitRate = rate ? (sfc.rateEdits[g.trade] != null ? sfc.rateEdits[g.trade] : rate.cost.median) : null;
+    const perUnitRate = rate ? rate.cost.median : null;
     const priced = bid != null ? bid > 0 : perUnitRate != null && meas != null && meas > 0;
     const cost = !priced ? null : bid != null ? bid : perUnitRate * meas;
     const profit = priced ? g.rcv - cost : null;
