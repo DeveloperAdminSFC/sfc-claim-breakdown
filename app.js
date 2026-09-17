@@ -1270,15 +1270,18 @@ async function loadSample() {
 //
 //   INS PAY OUT      = the trade's RCV from the breakdown (per-line O&P/tax included
 //                      when the carrier itemizes them)
-//   SFC NET COST     = median direct cost per unit (materials + labor) × measurement
-//   TARGET REVENUE   = net cost ÷ (1 − target%)   — target% of revenue left after net cost
+//   DIRECT COST      = median cost per unit (materials + labor) × measurement
+//   SFC NET COST     = direct cost + commissions + overhead, both charged as a % of
+//                      the insurance pay out (they scale with revenue)
 //   CURRENT PROFIT % = (pay out − net cost) ÷ pay out
+//   TARGET REVENUE   = direct cost ÷ (1 − commission% − overhead% − target%)
+//                      — the price that leaves target% after ALL costs
 //
 // Measurements are asked per applicable trade (trades with RCV), prefilled from the
 // largest parsed quantity in that trade's unit. Nothing persists.
 const SFC_TRADE_UOM = { ROOF: "SQ", SIDING: "SF", GUTTERS: "LF", PAINT: "SF", WINDOWS: "EA", FENCE: "LF", GARAGE: "SF", SOLAR: "PNL" };
 const SFC_MIN_JOBS = 3; // fewer measured jobs than this → "no SFC rate yet"
-let sfc = { pricing: null, measurements: {}, targetPct: 33, client: "", perUnit: false, groups: [] };
+let sfc = { pricing: null, measurements: {}, targetPct: 33, commPct: null, ohPct: null, client: "", perUnit: false, groups: [] };
 
 // "28.40 SQ" / "1,234.5 SF" → { value, unit }; null when the quantity has no unit.
 function parseQuantity(q) {
@@ -1347,6 +1350,12 @@ async function openSfcEstimate() {
   for (const g of groups) {
     if (sfc.measurements[g.trade] == null) sfc.measurements[g.trade] = suggestMeasurement(g.items, SFC_TRADE_UOM[g.trade]);
   }
+  // Commission and overhead rates default to Live Pricing's actuals (median commission %
+  // of collected; trailing operating expenses % of cash in). Editable in the form.
+  const jt = sfc.pricing.job_totals || {};
+  const oh = sfc.pricing.overhead || {};
+  if (sfc.commPct == null) sfc.commPct = jt.commission_pct && jt.commission_pct.median != null ? jt.commission_pct.median : 15;
+  if (sfc.ohPct == null) sfc.ohPct = oh.opex_pct_of_cash_in != null ? oh.opex_pct_of_cash_in : 15;
   renderSfcForm(groups);
 }
 
@@ -1385,6 +1394,8 @@ function renderSfcForm(groups) {
     <p class="sfc-note">Confirm the measurement for each trade on this claim. Suggestions come from the largest parsed quantity in that unit — check them against the roof report.</p>
     <div class="sfc-controls">
       <label>Client <input id="sfcClient" class="input input-wide" type="text" value="${esc(sfc.client)}" placeholder="Homeowner" /></label>
+      <label>Commissions <input id="sfcComm" class="input" type="number" min="0" max="90" step="0.5" value="${esc(sfc.commPct)}" /> %</label>
+      <label>Overhead <input id="sfcOh" class="input" type="number" min="0" max="90" step="0.5" value="${esc(sfc.ohPct)}" /> %</label>
       <label>Target profit <input id="sfcTarget" class="input" type="number" min="0" max="90" step="1" value="${esc(sfc.targetPct)}" /> %</label>
     </div>
     <table class="sfc-form">
@@ -1399,8 +1410,10 @@ function renderSfcForm(groups) {
       sfc.measurements[inp.dataset.trade] = v > 0 ? v : null;
     }
     sfc.client = document.getElementById("sfcClient").value.trim();
-    const t = Number(document.getElementById("sfcTarget").value);
-    sfc.targetPct = Number.isFinite(t) ? Math.max(0, Math.min(90, t)) : 33;
+    const pct = (id, dflt) => { const v = Number(document.getElementById(id).value); return Number.isFinite(v) ? Math.max(0, Math.min(90, v)) : dflt; };
+    sfc.targetPct = pct("sfcTarget", 33);
+    sfc.commPct = pct("sfcComm", 15);
+    sfc.ohPct = pct("sfcOh", 15);
     renderSfcEstimate(groups);
   });
 }
@@ -1411,7 +1424,9 @@ function renderSfcEstimate(groups) {
   const md = state.summary || {};
   const crDate = md.date_of_loss || "—";
   const client = sfc.client || "—";
-  const keep = 1 - sfc.targetPct / 100;
+  const commR = sfc.commPct / 100, ohR = sfc.ohPct / 100;
+  // Share of revenue left for direct cost once commissions, overhead and the target are paid.
+  const keep = 1 - commR - ohR - sfc.targetPct / 100;
   // Per-UOM view: every dollar figure ÷ the trade's measurement ("$532 / SQ").
   const per = sfc.perUnit;
   const money = (n, meas, uom) =>
@@ -1422,8 +1437,12 @@ function renderSfcEstimate(groups) {
     const rate = sfcRateFor(g.trade);
     const meas = sfc.measurements[g.trade];
     const priced = !!rate && meas != null && meas > 0;
-    const cost = priced ? rate.cost.median * meas : null;
-    const target = priced && keep > 0.005 ? cost / keep : null;
+    const direct = priced ? rate.cost.median * meas : null;
+    const comm = priced ? g.rcv * commR : null;
+    const oh = priced ? g.rcv * ohR : null;
+    const cost = priced ? direct + comm + oh : null; // fully loaded at the insurance pay out
+    const target = priced && keep > 0.005 ? direct / keep : null;
+    const profit = priced ? g.rcv - cost : null; // projected profit at the insurance pay out
     const pct = priced && g.rcv > 0 ? ((g.rcv - cost) / g.rcv) * 100 : null;
     let cls = "sfc-norate", verdict = rate ? "enter measurement" : "no SFC rate yet";
     if (priced) {
@@ -1431,11 +1450,11 @@ function renderSfcEstimate(groups) {
       else if (pct >= 0) { cls = "sfc-warn"; verdict = `below ${sfc.targetPct}% target`; }
       else { cls = "sfc-bad"; verdict = "loses money — do not do"; }
     }
-    return { g, uom, rate, meas, priced, cost, target, pct, cls, verdict };
+    return { g, uom, rate, meas, priced, direct, comm, oh, cost, profit, target, pct, cls, verdict };
   });
 
   const priced = rows.filter((r) => r.priced);
-  const tot = priced.reduce((a, r) => { a.rcv += r.g.rcv; a.cost += r.cost; a.target += r.target || 0; return a; }, { rcv: 0, cost: 0, target: 0 });
+  const tot = priced.reduce((a, r) => { a.rcv += r.g.rcv; a.direct += r.direct; a.cost += r.cost; a.target += r.target || 0; return a; }, { rcv: 0, direct: 0, cost: 0, target: 0 });
   const totPct = tot.rcv > 0 ? ((tot.rcv - tot.cost) / tot.rcv) * 100 : null;
   // Whole-claim per-unit basis = roof squares (same convention as Live Pricing's TOTAL row).
   const roofSq = Number(sfc.measurements.ROOF) || 0;
@@ -1449,7 +1468,8 @@ function renderSfcEstimate(groups) {
           <span class="sfc-rate"><em>${r.meas != null ? `${esc(r.meas)} ${esc(r.uom)}` : ""}</em></span></td>
         <td>${esc(crDate)}</td>
         <td>${money(r.g.rcv, r.meas, r.uom)}</td>
-        <td class="${r.priced ? "" : "muted"}">${r.priced ? money(r.cost, r.meas, r.uom) : "—"}</td>
+        <td class="${r.priced ? "" : "muted"}">${r.priced ? money(r.cost, r.meas, r.uom) : "—"}${r.priced ? `<span class="verdict split">direct ${money(r.direct, r.meas, r.uom)} · comm ${money(r.comm, r.meas, r.uom)} · OH ${money(r.oh, r.meas, r.uom)}</span>` : ""}</td>
+        <td class="${r.priced ? "pct" : "muted"}">${r.priced ? money(r.profit, r.meas, r.uom) : "—"}</td>
         <td class="${r.priced ? "" : "muted"}">${r.priced ? money(r.target, r.meas, r.uom) : "—"}</td>
         <td class="pct">${r.priced ? fmtPct1(r.pct) : "—"}<span class="verdict">${esc(r.verdict)}</span></td>
       </tr>`)
@@ -1471,16 +1491,19 @@ function renderSfcEstimate(groups) {
       <table class="summary sfc-est">
         <thead><tr>
           <th class="left">Client</th><th class="left">Trade</th><th>C.R. Date</th>
-          <th>Ins Pay Out</th><th>SFC (Net Cost)</th><th>Target Revenue</th><th>Current Profit %</th>
+          <th>Ins Pay Out</th><th>SFC (Net Cost)</th><th>SFC (Projected Profit)</th><th>Target Revenue</th><th>Current Profit %</th>
         </tr></thead>
         <tbody>${body}</tbody>
         <tfoot><tr class="${totCls}">
           <td class="left">Total</td><td class="left">${priced.length} priced trade${priced.length === 1 ? "" : "s"}${per ? " · per roof SQ" : ""}</td><td></td>
-          <td>${money(tot.rcv, roofSq, "SQ")}</td><td>${money(tot.cost, roofSq, "SQ")}</td><td>${money(tot.target, roofSq, "SQ")}</td>
+          <td>${money(tot.rcv, roofSq, "SQ")}</td>
+          <td>${money(tot.cost, roofSq, "SQ")}<span class="verdict split">direct ${money(tot.direct, roofSq, "SQ")} · comm ${money(tot.rcv * commR, roofSq, "SQ")} · OH ${money(tot.rcv * ohR, roofSq, "SQ")}</span></td>
+          <td class="pct">${money(tot.rcv - tot.cost, roofSq, "SQ")}</td>
+          <td>${money(tot.target, roofSq, "SQ")}</td>
           <td class="pct">${fmtPct1(totPct)}</td>
         </tr></tfoot>
       </table>
-      <p class="sfc-rates">Target revenue leaves ${esc(sfc.targetPct)}% of revenue after net cost. SFC net cost = median cost per unit × measurement, from ${esc(String(meta.count || ""))} jobs on the Live Pricing page${meta.date_from ? ` (${esc(meta.date_from)} → ${esc(meta.date_to || "")})` : ""}. Rates used: ${ratesUsed || "none"}.</p>
+      <p class="sfc-rates">Net cost = direct cost + commissions ${esc(sfc.commPct)}% + overhead ${esc(sfc.ohPct)}% of the insurance pay out. Target revenue leaves ${esc(sfc.targetPct)}% after all three. Direct cost = median cost per unit × measurement, from ${esc(String(meta.count || ""))} jobs on the Live Pricing page${meta.date_from ? ` (${esc(meta.date_from)} → ${esc(meta.date_to || "")})` : ""}. Rates used: ${ratesUsed || "none"}.</p>
     </section>`;
   sfcBarMode("estimate");
   document.getElementById("sfcModal").querySelector(".modal-body").scrollTop = 0;
