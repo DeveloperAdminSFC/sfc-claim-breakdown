@@ -1391,7 +1391,6 @@ function renderSfcForm(groups) {
     .join("");
 
   document.getElementById("sfcBody").innerHTML = `
-    <p class="sfc-note">Confirm the measurement for each trade on this claim. Suggestions come from the largest parsed quantity in that unit — check them against the roof report.</p>
     <div class="sfc-controls">
       <label>Client <input id="sfcClient" class="input input-wide" type="text" value="${esc(sfc.client)}" placeholder="Homeowner" /></label>
       <label>Commissions <input id="sfcComm" class="input" type="number" min="0" max="90" step="0.5" value="${esc(sfc.commPct)}" /> %</label>
@@ -1468,10 +1467,10 @@ function renderSfcEstimate(groups) {
           <span class="sfc-rate"><em>${r.meas != null ? `${esc(r.meas)} ${esc(r.uom)}` : ""}</em></span></td>
         <td>${esc(crDate)}</td>
         <td>${money(r.g.rcv, r.meas, r.uom)}</td>
-        <td class="${r.priced ? "" : "muted"}">${r.priced ? money(r.cost, r.meas, r.uom) : "—"}${r.priced ? `<span class="verdict split">direct ${money(r.direct, r.meas, r.uom)} · comm ${money(r.comm, r.meas, r.uom)} · OH ${money(r.oh, r.meas, r.uom)}</span>` : ""}</td>
+        <td class="${r.priced ? "" : "muted"}">${r.priced ? money(r.cost, r.meas, r.uom) : "—"}</td>
         <td class="${r.priced ? "pct" : "muted"}">${r.priced ? money(r.profit, r.meas, r.uom) : "—"}</td>
         <td class="${r.priced ? "" : "muted"}">${r.priced ? money(r.target, r.meas, r.uom) : "—"}</td>
-        <td class="pct">${r.priced ? fmtPct1(r.pct) : "—"}<span class="verdict">${esc(r.verdict)}</span></td>
+        <td class="pct">${r.priced ? fmtPct1(r.pct) : "—"}</td>
       </tr>`)
     .join("");
 
@@ -1497,13 +1496,12 @@ function renderSfcEstimate(groups) {
         <tfoot><tr class="${totCls}">
           <td class="left">Total</td><td class="left">${priced.length} priced trade${priced.length === 1 ? "" : "s"}${per ? " · per roof SQ" : ""}</td><td></td>
           <td>${money(tot.rcv, roofSq, "SQ")}</td>
-          <td>${money(tot.cost, roofSq, "SQ")}<span class="verdict split">direct ${money(tot.direct, roofSq, "SQ")} · comm ${money(tot.rcv * commR, roofSq, "SQ")} · OH ${money(tot.rcv * ohR, roofSq, "SQ")}</span></td>
+          <td>${money(tot.cost, roofSq, "SQ")}</td>
           <td class="pct">${money(tot.rcv - tot.cost, roofSq, "SQ")}</td>
           <td>${money(tot.target, roofSq, "SQ")}</td>
           <td class="pct">${fmtPct1(totPct)}</td>
         </tr></tfoot>
       </table>
-      <p class="sfc-rates">Net cost = direct cost + commissions ${esc(sfc.commPct)}% + overhead ${esc(sfc.ohPct)}% of the insurance pay out. Target revenue leaves ${esc(sfc.targetPct)}% after all three. Direct cost = median cost per unit × measurement, from ${esc(String(meta.count || ""))} jobs on the Live Pricing page${meta.date_from ? ` (${esc(meta.date_from)} → ${esc(meta.date_to || "")})` : ""}. Rates used: ${ratesUsed || "none"}.</p>
     </section>`;
   sfcBarMode("estimate");
   document.getElementById("sfcModal").querySelector(".modal-body").scrollTop = 0;
