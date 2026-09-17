@@ -1266,16 +1266,14 @@ async function loadSample() {
 // --------------------------- SFC Estimate --------------------------------- //
 // "Build SFC Estimate": price the claim's trades with SFC's live cost history (the
 // OI platform's /api/analytics/live-pricing — the same medians the Live Pricing page
-// shows) and compare to what insurance is paying, trade by trade.
+// shows) and lay the job out top-down for the production manager:
 //
-//   INS PAY OUT      = the trade's RCV from the breakdown (per-line O&P/tax included
-//                      when the carrier itemizes them)
-//   DIRECT COST      = median cost per unit (materials + labor) × measurement
-//   SFC NET COST     = direct cost + commissions + overhead, both charged as a % of
-//                      the insurance pay out (they scale with revenue)
-//   CURRENT PROFIT % = (pay out − net cost) ÷ pay out
-//   TARGET REVENUE   = direct cost ÷ (1 − commission% − overhead% − target%)
-//                      — the price that leaves target% after ALL costs
+//   1. Trades      insurance pays (trade RCV) vs SFC cost (median cost/unit × measurement)
+//   2. Job costs   commissions and other job costs as % of pay out, overhead per roof SQ —
+//                  every rate straight from pricing history, nothing typed
+//   3. Net profit  pay out − trades cost − job costs − overhead
+//   4. Target      revenue that leaves target% (33) net after job costs and overhead:
+//                  (trade cost + overhead) ÷ (1 − commission% − other% − target%)
 //
 // Measurements are asked per applicable trade (trades with RCV), prefilled from the
 // largest parsed quantity in that trade's unit. Nothing persists.
@@ -1363,6 +1361,10 @@ async function openSfcEstimate() {
     const all = oc.pct_of_revenue && oc.pct_of_revenue.median != null ? oc.pct_of_revenue.median : null;
     sfc.otherPct = all != null ? Math.max(0, Math.round((all - sfc.commPct) * 10) / 10) : 5;
   }
+  // Overhead per roof SQ = operating expenses' share of cash in × median collected per
+  // roof SQ — what a square of roof has to carry in overhead on the average job.
+  const collSq = jt.collected_per_sq && jt.collected_per_sq.median != null ? jt.collected_per_sq.median : null;
+  sfc.ohPerSq = collSq != null ? (sfc.ohPct / 100) * collSq : null;
   renderSfcForm(groups);
 }
 
@@ -1400,10 +1402,7 @@ function renderSfcForm(groups) {
   document.getElementById("sfcBody").innerHTML = `
     <div class="sfc-controls">
       <label>Client <input id="sfcClient" class="input input-wide" type="text" value="${esc(sfc.client)}" placeholder="Homeowner" /></label>
-      <label>Commissions <input id="sfcComm" class="input" type="number" min="0" max="90" step="0.5" value="${esc(sfc.commPct)}" /> %</label>
-      <label>Overhead <input id="sfcOh" class="input" type="number" min="0" max="90" step="0.5" value="${esc(sfc.ohPct)}" /> %</label>
-      <label>Other job costs <input id="sfcOther" class="input" type="number" min="0" max="90" step="0.5" value="${esc(sfc.otherPct)}" /> %</label>
-      <label>Target profit <input id="sfcTarget" class="input" type="number" min="0" max="90" step="1" value="${esc(sfc.targetPct)}" /> %</label>
+      <label>Target net margin <input id="sfcTarget" class="input" type="number" min="0" max="90" step="1" value="${esc(sfc.targetPct)}" /> %</label>
     </div>
     <table class="sfc-form">
       <thead><tr><th>Trade</th><th class="num">Ins. pay out (RCV)</th><th class="num">Measurement</th><th>SFC cost history</th></tr></thead>
@@ -1419,81 +1418,79 @@ function renderSfcForm(groups) {
     sfc.client = document.getElementById("sfcClient").value.trim();
     const pct = (id, dflt) => { const v = Number(document.getElementById(id).value); return Number.isFinite(v) ? Math.max(0, Math.min(90, v)) : dflt; };
     sfc.targetPct = pct("sfcTarget", 33);
-    sfc.commPct = pct("sfcComm", 15);
-    sfc.ohPct = pct("sfcOh", 15);
-    sfc.otherPct = pct("sfcOther", 5);
     renderSfcEstimate(groups);
   });
 }
 
-// Step 2 — the estimate. Columns:
-//   CLIENT | TRADE | UOM | C.R. DATE | INS PAY OUT | SFC (NET COST) | SFC (PROJECTED PROFIT $ and %) | TARGET REVENUE
-// then an Other Job Costs row (permits, supplements, compliance — a % of pay out) and TOTAL.
+// Step 2 — the estimate, top-down: trades → job costs from history → net → target.
 function renderSfcEstimate(groups) {
   sfc.groups = groups;
   const md = state.summary || {};
-  const crDate = md.date_of_loss || "—";
   const client = sfc.client || "—";
-  const commR = sfc.commPct / 100, ohR = sfc.ohPct / 100, otherR = sfc.otherPct / 100;
-  // Target revenue = net cost ÷ (1 − target%): the price that leaves target% after net cost.
-  const keep = 1 - sfc.targetPct / 100;
-  const per = sfc.perUnit;
-  const money = (n, meas) => (per ? (meas > 0 ? fmtRate(n / meas) : "—") : fmtUSD(n));
-  const perTitle = per ? " / UOM" : "";
-  // Claim report date as MM/DD/YYYY.
-  const crDateFmt = (() => {
-    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(crDate));
-    return m ? `${m[2]}/${m[3]}/${m[1]}` : crDate;
+  const crDate = (() => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(md.date_of_loss || ""));
+    return m ? `${m[2]}/${m[3]}/${m[1]}` : md.date_of_loss || "—";
   })();
-  // Green at or above the target, red below it.
-  const pctClass = (pct) => (pct == null ? "" : pct >= sfc.targetPct ? "pos" : "neg");
-  const profitCell = (profit, pct, meas) =>
-    profit == null ? "—" : `${money(profit, meas)} <span class="pct ${pctClass(pct)}">${fmtPct1(pct)}</span>`;
+  const commR = sfc.commPct / 100, otherR = sfc.otherPct / 100;
+  const per = sfc.perUnit;
+  const money0 = (n) => (n == null ? "—" : Number(n).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }));
+  const money = (n, meas) => (per ? (meas > 0 ? fmtRate(n / meas) : "—") : money0(n));
+  const pctCls = (pct) => (pct == null ? "" : pct >= sfc.targetPct ? "pos" : "neg");
 
+  // 1. Trades
   const rows = groups.map((g) => {
     const uom = SFC_TRADE_UOM[g.trade];
     const rate = sfcRateFor(g.trade);
     const meas = sfc.measurements[g.trade];
     const priced = !!rate && meas != null && meas > 0;
-    const direct = priced ? rate.cost.median * meas : null;
-    const cost = priced ? direct + g.rcv * (commR + ohR) : null; // loaded at the insurance pay out
+    const cost = priced ? rate.cost.median * meas : null;
     const profit = priced ? g.rcv - cost : null;
     const pct = priced && g.rcv > 0 ? (profit / g.rcv) * 100 : null;
-    const target = priced && keep > 0.005 ? cost / keep : null;
-    return { g, uom, meas, priced, direct, cost, profit, pct, target };
+    return { g, uom, rate, meas, priced, cost, profit, pct };
   });
-
   const priced = rows.filter((r) => r.priced);
-  const roofSq = Number(sfc.measurements.ROOF) || 0;
   const payout = priced.reduce((a, r) => a + r.g.rcv, 0);
-  const other = payout * otherR;
-  const totCost = priced.reduce((a, r) => a + r.cost, 0) + other;
-  const totProfit = payout - totCost;
-  const totPct = payout > 0 ? (totProfit / payout) * 100 : null;
-  const totTarget = keep > 0.005 ? totCost / keep : 0;
+  const tradeCost = priced.reduce((a, r) => a + r.cost, 0);
+  const tradeProfit = payout - tradeCost;
 
-  const body = rows
+  // 2. Job-level costs from history
+  const roofSq = Number(sfc.measurements.ROOF) || 0;
+  const comm = payout * commR;
+  const other = payout * otherR;
+  const overhead = roofSq > 0 && sfc.ohPerSq != null ? sfc.ohPerSq * roofSq : payout * (sfc.ohPct / 100);
+  const overheadBasis = roofSq > 0 && sfc.ohPerSq != null
+    ? `${fmtRate(sfc.ohPerSq)} per roof SQ × ${roofSq} SQ`
+    : `${sfc.ohPct}% of pay out`;
+
+  // 3. Net
+  const net = tradeProfit - comm - other - overhead;
+  const netPct = payout > 0 ? (net / payout) * 100 : null;
+
+  // 4. Target: revenue R with R − tradeCost − comm(R) − other(R) − overhead = target% × R
+  const keep = 1 - commR - otherR - sfc.targetPct / 100;
+  const targetRev = keep > 0.005 ? (tradeCost + overhead) / keep : null;
+  const gap = targetRev != null ? targetRev - payout : null;
+
+  const tradeRows = rows
     .map((r) => `
       <tr>
-        <td class="left">${esc(client)}</td>
-        <td class="center">${esc(r.g.trade)}</td>
+        <td class="left">${esc(r.g.trade)}</td>
         <td class="center">${r.meas != null ? `${esc(r.meas)} ${esc(r.uom)}` : "—"}</td>
-        <td class="center">${esc(crDateFmt)}</td>
+        <td class="basis">${r.rate ? `${fmtRate(r.rate.cost.median)} / ${esc(r.uom)}` : "no SFC rate yet"}</td>
         <td>${money(r.g.rcv, r.meas)}</td>
         <td>${r.priced ? money(r.cost, r.meas) : "—"}</td>
-        <td>${profitCell(r.profit, r.pct, r.meas)}</td>
-        <td>${r.priced ? money(r.target, r.meas) : "—"}</td>
+        <td class="${pctCls(r.pct)}">${r.priced ? money(r.profit, r.meas) : "—"}</td>
+        <td class="${pctCls(r.pct)}">${r.priced ? fmtPct1(r.pct) : "—"}</td>
       </tr>`)
-    .join("") + `
-      <tr class="sfc-other">
-        <td class="left"></td>
-        <td class="center">Other job costs</td>
-        <td class="center">${esc(sfc.otherPct)}%</td>
+    .join("");
+
+  const line = (label, basis, amount, opts = {}) => `
+      <tr class="${opts.cls || ""}">
+        <td class="left" colspan="3">${esc(label)}<span class="basis-inline">${esc(basis)}</span></td>
         <td></td>
-        <td></td>
-        <td>${money(other, roofSq)}</td>
-        <td>${money(-other, roofSq)}</td>
-        <td></td>
+        <td>${opts.blankCost ? "" : money0(amount)}</td>
+        <td class="${opts.pctCls || ""}">${opts.profit != null ? money0(opts.profit) : ""}</td>
+        <td class="${opts.pctCls || ""}">${opts.pct != null ? fmtPct1(opts.pct) : ""}</td>
       </tr>`;
 
   document.getElementById("sfcBody").innerHTML = `
@@ -1501,21 +1498,36 @@ function renderSfcEstimate(groups) {
       <div class="doc-head">
         <p class="doc-eyebrow">SFC Estimate · Insurance vs SFC Pricing</p>
         <h1 class="doc-title sfc-title">${esc(client !== "—" ? client : "SFC Estimate")}</h1>
-        <p class="doc-sub">${esc(md.insurance_company || "")}${md.insurance_company && md.claim_number ? " · " : ""}${md.claim_number ? "Claim #" + esc(md.claim_number) : ""}</p>
+        <p class="doc-sub">${esc(md.insurance_company || "")}${md.insurance_company ? " · " : ""}Claim report ${esc(crDate)}</p>
       </div>
       <table class="summary sfc-est">
         <thead><tr>
-          <th class="left">Client</th><th class="center">Trade</th><th class="center">UOM</th><th class="center">C.R. Date</th>
-          <th>Ins Pay Out${perTitle}</th><th>SFC (Net Cost)${perTitle}</th><th>SFC (Projected Profit)${perTitle}</th><th>Target Revenue${perTitle}</th>
+          <th class="left">Trade</th><th class="center">Measurement</th><th class="left">SFC rate</th>
+          <th>Insurance pays${per ? " / unit" : ""}</th><th>SFC cost${per ? " / unit" : ""}</th><th>Profit${per ? " / unit" : ""}</th><th>Margin</th>
         </tr></thead>
-        <tbody>${body}</tbody>
-        <tfoot><tr>
-          <td class="left">Total</td><td></td><td class="center">${per ? "per roof SQ" : ""}</td><td></td>
-          <td>${money(payout, roofSq)}</td>
-          <td>${money(totCost, roofSq)}</td>
-          <td>${profitCell(totProfit, totPct, roofSq)}</td>
-          <td>${money(totTarget, roofSq)}</td>
-        </tr></tfoot>
+        <tbody>${tradeRows}
+          <tr class="sfc-sub">
+            <td class="left" colspan="3">Trades</td>
+            <td>${money0(payout)}</td><td>${money0(tradeCost)}</td>
+            <td class="${pctCls(payout > 0 ? (tradeProfit / payout) * 100 : null)}">${money0(tradeProfit)}</td>
+            <td class="${pctCls(payout > 0 ? (tradeProfit / payout) * 100 : null)}">${fmtPct1(payout > 0 ? (tradeProfit / payout) * 100 : null)}</td>
+          </tr>
+          ${line("Commissions", `${sfc.commPct}% of pay out`, comm)}
+          ${line("Other job costs", `${sfc.otherPct}% of pay out · permits, supplements, compliance`, other)}
+          ${line("Overhead", overheadBasis, overhead)}
+        </tbody>
+        <tfoot>
+          <tr class="sfc-net">
+            <td class="left" colspan="3">Net profit at insurance pay out</td>
+            <td>${money0(payout)}</td><td>${money0(tradeCost + comm + other + overhead)}</td>
+            <td class="${pctCls(netPct)}">${money0(net)}</td><td class="${pctCls(netPct)}">${fmtPct1(netPct)}</td>
+          </tr>
+          <tr class="sfc-target">
+            <td class="left" colspan="3">Revenue needed for ${esc(sfc.targetPct)}% net</td>
+            <td>${money0(targetRev)}</td><td></td>
+            <td class="${gap != null && gap > 0 ? "neg" : "pos"}">${gap != null ? (gap > 0 ? `+${money0(gap)} short` : `${money0(-gap)} over`) : "—"}</td><td></td>
+          </tr>
+        </tfoot>
       </table>
     </section>`;
   sfcBarMode("estimate");

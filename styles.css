@@ -417,19 +417,19 @@ body {
 .sfc-rate { font-size: 12px; color: var(--ink-soft); white-space: nowrap; }
 .sfc-rate em { font-style: normal; color: var(--ink-faint); }
 .sfc-form-foot { display: flex; justify-content: flex-end; gap: 8px; }
-/* Eight columns on a letter sheet: tighter type and padding, wrap only the split line. */
-.summary.sfc-est { font-size: 14px; table-layout: auto; }
-.summary.sfc-est thead th { font-size: 10px; padding: 8px 6px; white-space: normal; }
-.summary.sfc-est tbody td, .summary.sfc-est tfoot td { padding: 10px 6px; white-space: nowrap; font-weight: 700; color: #000; font-variant-numeric: tabular-nums; }
-.summary.sfc-est tbody td.left, .summary.sfc-est tbody td.center { font-weight: 600; }
-.summary.sfc-est tfoot td { font-size: 15px; }
-.summary.sfc-est td.left { white-space: normal; }
-.summary.sfc-est .pct { font-size: 13px; font-weight: 800; margin-left: 6px; }
-.summary.sfc-est .pct.pos { color: var(--pos); }
-.summary.sfc-est .pct.neg { color: var(--neg); }
-.summary.sfc-est tr.sfc-other td { color: var(--ink-soft); }
-.summary.sfc-est tfoot td { font-weight: 700; }
+/* Job P&L for the production manager: big numbers, one accent for margin. */
+.summary.sfc-est { font-size: 15px; table-layout: auto; }
+.summary.sfc-est thead th { font-size: 10.5px; padding: 8px 8px; white-space: normal; }
+.summary.sfc-est tbody td, .summary.sfc-est tfoot td { padding: 11px 8px; white-space: nowrap; font-weight: 700; color: #000; font-variant-numeric: tabular-nums; }
 .summary.sfc-est th.center, .summary.sfc-est td.center { text-align: center; }
+.summary.sfc-est td.basis { text-align: left; font-weight: 500; color: var(--ink-soft); font-size: 12.5px; }
+.summary.sfc-est .basis-inline { display: block; font-weight: 500; color: var(--ink-faint); font-size: 11.5px; margin-top: 2px; white-space: normal; }
+.summary.sfc-est td.pos { color: var(--pos); }
+.summary.sfc-est td.neg { color: var(--neg); }
+.summary.sfc-est tr.sfc-sub td { border-top: 2px solid var(--rule-strong); background: var(--wash); }
+.summary.sfc-est tfoot td { font-size: 16px; }
+.summary.sfc-est tr.sfc-net td { border-top: 2px solid #000; }
+.summary.sfc-est tr.sfc-target td { border-top: 1px solid var(--rule); font-size: 15px; }
 .sfc-title { font-size: 30px; font-weight: 800; color: #000; letter-spacing: -0.01em; }
 .sfc-rates { font-size: 11.5px; color: var(--ink-soft); margin: 12px 0 0; line-height: 1.6; }
 .sfc-rates b { color: var(--ink); }
