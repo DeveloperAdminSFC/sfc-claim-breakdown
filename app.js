@@ -854,7 +854,8 @@ function groupByTrade(items) {
   });
 }
 
-// One "Summary by Trade" table: trade rows + a total row. Per-line O&P/Taxes, when the carrier
+// One "Summary by Trade" table: trade rows + a total row. RCV is the first money column (the
+// number the production manager reads first). Per-line O&P/Taxes, when the carrier
 // prints them, are summed per trade and shown in those columns (a decomposition of RCV — already
 // inside it). Carriers that itemize O&P/Tax only in the summary leave the per-trade cells at "—"
 // and carry the value only on the Total row (op/tax passed in). showRows:false omits trade rows —
@@ -873,9 +874,9 @@ function summaryTableHTML(groups, { op = null, tax = null, totalLabel = "Total",
       (g) => `
       <tr>
         <td class="left"><span class="trade-cell"><span class="trade-swatch" style="background:${g.color}"></span>${esc(g.trade)}</span></td>
+        <td>${fmtUSD(g.rcv)}</td>
         <td>${g.op > 0 ? fmtUSD(g.op) : dash}</td>
         <td>${g.tax > 0 ? fmtUSD(g.tax) : dash}</td>
-        <td>${fmtUSD(g.rcv)}</td>
         <td>${g.pwi > 0 ? fmtUSD(g.pwi) : dash}</td>
         <td>${fmtUSD(g.recDep)}</td>
         <td>${fmtUSD(g.nonRecDep)}</td>
@@ -886,15 +887,15 @@ function summaryTableHTML(groups, { op = null, tax = null, totalLabel = "Total",
   return `
       <table class="summary">
         <thead><tr>
-          <th class="left">Trade</th><th>O&amp;P</th><th>Taxes</th>
-          <th>RCV</th><th>Paid When Incurred</th><th>Recoverable Dep.</th><th>Non-Rec. Dep.</th><th>ACV</th>
+          <th class="left">Trade</th><th>RCV</th><th>O&amp;P</th><th>Taxes</th>
+          <th>Paid When Incurred</th><th>Recoverable Dep.</th><th>Non-Rec. Dep.</th><th>ACV</th>
         </tr></thead>
         <tbody>${rows}</tbody>
         <tfoot><tr>
           <td class="left">${esc(totalLabel)}</td>
+          <td>${fmtUSD(t.rcv)}</td>
           <td>${op != null ? fmtUSD(op) : (t.op > 0 ? fmtUSD(t.op) : dash)}</td>
           <td>${tax != null ? fmtUSD(tax) : (t.tax > 0 ? fmtUSD(t.tax) : dash)}</td>
-          <td>${fmtUSD(t.rcv)}</td>
           <td>${t.pwi > 0 ? fmtUSD(t.pwi) : dash}</td>
           <td>${fmtUSD(t.recDep)}</td>
           <td>${fmtUSD(t.nonRecDep)}</td>
@@ -1107,15 +1108,28 @@ function renderDoc() {
   const multi = usedStructures.length > 1;
 
   const job = state.jobInfo;
+  // Header block, 3 rows × 2 columns. Left: who/when. Right: what the insurance pays, computed
+  // from THIS sheet's own totals (the Total row of the claim-wide table) so the header always
+  // ties to the table beneath it:
+  //   Total Insurance Pays Homeowner = RCV − Non-Recoverable Dep. − Deductible − Paid When Incurred
+  //   1st Payment (ACV check)        = ACV − Deductible
+  // where ACV already nets PWI and both depreciation buckets (same formula everywhere).
+  // Deductible is the claim's stated deductible (0 when the parser did not find one).
+  const claimTotals = groupByTrade(items).reduce(
+    (a, g) => { a.rcv += g.rcv; a.nonRecDep += g.nonRecDep; a.pwi += g.pwi; a.acv += g.acv; return a; },
+    { rcv: 0, nonRecDep: 0, pwi: 0, acv: 0 }
+  );
+  const deductible = md.deductible != null ? Number(md.deductible) || 0 : 0;
+  const insurancePays = claimTotals.rcv - claimTotals.nonRecDep - deductible - claimTotals.pwi;
+  const firstPayment = claimTotals.acv - deductible;
+  // Rendered row-major into a 2-column grid: [left, right] per row.
   const metaRows = [
     ["Job #", job && job.job_number != null ? String(job.job_number) : "—"],
-    ["Client", (job && job.contact_name) || "—"],
-    ["Insurance", md.insurance_company || "—"],
-    ["Claim #", md.claim_number || "—"],
-    ["Date of Loss", md.date_of_loss || "—"],
     ["Deductible", md.deductible != null ? fmtUSD(md.deductible) : "—"],
-    ["Line Items", String(items.length)],
-    ["Printed", new Date().toLocaleDateString("en-US")],
+    ["Client Name", (job && job.contact_name) || "—"],
+    ["Total Insurance Pays Homeowner", fmtUSD(insurancePays)],
+    ["Date Printed", new Date().toLocaleDateString("en-US")],
+    ["1st Payment (ACV − Deductible)", fmtUSD(firstPayment)],
   ];
 
   // ---------- SUMMARY PAGES ----------
@@ -1132,7 +1146,7 @@ function renderDoc() {
       </div>
 
       <div class="meta-grid">
-        ${metaRows.map(([k, v]) => `<div class="meta-item"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`).join("")}
+        ${metaRows.map(([k, v], i) => `<div class="meta-item${i % 2 ? " meta-pay" : ""}"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`).join("")}
       </div>`;
 
   let summaryPagesHTML;
@@ -1272,10 +1286,8 @@ async function loadSample() {
 //   other job costs every COGS line that is not labor or materials — per roof SQ
 //   job summary     gross profit at the insurance pay out (after trades + other job costs);
 //                   green at or above the 33% gross-margin target
-//   page 2          strategy per trade — the two levers: the price that reaches 33%
-//                   (charge the client / supplement the claim) or the most the trade
-//                   can cost at the insurance number (cut the cost)
 //
+// One page: Trade | Measurement | Cost Per Unit | Claim RCV | SFC Cost | Margin.
 // Every rate comes from pricing history; only the measurements and client are typed.
 const SFC_TRADE_UOM = { ROOF: "SQ", SIDING: "SF", GUTTERS: "LF", PAINT: "SF", WINDOWS: "EA", FENCE: "LF", GARAGE: "SF", SOLAR: "PNL" };
 const SFC_MIN_JOBS = 3; // fewer measured jobs than this → "no SFC rate yet"
@@ -1542,42 +1554,49 @@ function renderSfcEstimate(allGroups) {
   const netPct = payout > 0 ? (net / payout) * 100 : null;
 
 
-  // Per-unit view: the SFC rate column goes away (it IS the cost per unit) and every
-  // figure carries its unit. Job-wide rows are per roof SQ.
+  // Per-unit view: every dollar figure carries its unit. Job-wide rows are per roof SQ.
   const unit = (n, meas, uom) => (meas > 0 ? `${fmtRate(n / meas)}<span class="per">/${esc(uom)}</span>` : "—");
   const cell = (n, meas, uom) => (per ? unit(n, meas, uom) : money0(n));
-  const span = 2;
+  const span = 3; // Trade + Measurement + Cost Per Unit
+
+  // Cost per unit: the history rate (or the unlocked edit) for a measured trade; a bid
+  // spread over its measurement when one was typed; otherwise nothing to show.
+  const costPerUnit = (x) => {
+    if (!x.priced || !x.uom) return "—";
+    const rate = x.bid != null ? (x.meas > 0 ? x.bid / x.meas : null) : x.cost / x.meas;
+    return rate == null ? "—" : `${fmtRate(rate)}<span class="per">/${esc(x.uom)}</span>`;
+  };
 
   const tradeRows = rows
     .map((x) => `
       <tr>
         <td class="left">${esc(x.g.trade)}</td>
         <td class="center">${x.meas != null ? `${esc(x.meas)} ${esc(x.uom)}` : ""}</td>
+        <td>${costPerUnit(x)}</td>
         <td>${x.uom ? cell(x.g.rcv, x.meas, x.uom) : money0(x.g.rcv)}</td>
         <td>${x.priced ? cell(x.cost, x.meas, x.uom) : "—"}</td>
-        <td class="${pctCls(x.pct)}">${x.priced ? cell(x.profit, x.meas, x.uom) : "—"}</td>
         <td class="${pctCls(x.pct)}">${x.priced ? fmtPct1(x.pct) : "—"}</td>
       </tr>`)
     .join("");
 
-  // Dollar view: just the amount. Per-UOM view: the share of pay out it represents.
+  // Dollar view: just the amount (in the SFC Cost column). Per-UOM view: the share of pay
+  // out it represents.
   const sqRow = (label, amount, pct) => `
       <tr>
         <td class="left">${esc(label)}</td>
         <td></td>
         <td></td>
-        <td>${per ? `${esc(pct)}%` : money0(amount)}</td>
         <td></td>
+        <td>${per ? `${esc(pct)}%` : money0(amount)}</td>
         <td></td>
       </tr>`;
 
-  // Full-job rows: revenue | cost | profit | margin, all filled in.
+  // Full-job row: revenue | cost | margin.
   const jobRow = (label, cls, revenue, cost, marginPct, marginCls) => `
       <tr class="${cls}">
         <td class="left" colspan="${span}">${esc(label)}</td>
         <td>${cell(revenue, roofSq, "SQ")}</td>
         <td>${cell(cost, roofSq, "SQ")}</td>
-        <td class="${marginCls}">${cell(revenue - cost, roofSq, "SQ")}</td>
         <td class="${marginCls}">${fmtPct1(marginPct)}</td>
       </tr>`;
 
@@ -1590,8 +1609,8 @@ function renderSfcEstimate(allGroups) {
       </div>
       <table class="summary sfc-est">
         <thead><tr>
-          <th class="left">Trade</th><th class="center">Measurement</th>
-          <th>Insurance pays</th><th>SFC cost</th><th>Profit</th><th>Margin</th>
+          <th class="left">Trade</th><th class="center">Measurement</th><th>Cost Per Unit</th>
+          <th>Claim RCV</th><th>SFC Cost</th><th>Margin</th>
         </tr></thead>
         <tbody>
           ${tradeRows}
@@ -1601,69 +1620,9 @@ function renderSfcEstimate(allGroups) {
           ${jobRow("Job Summary", "sfc-net", payout, totalCost, netPct, pctCls(netPct))}
         </tfoot>
       </table>
-    </section>
-    ${strategyPageHTML(rows, payout, tradeCost, per)}`;
+    </section>`;
   sfcBarMode("estimate");
   document.getElementById("sfcModal").querySelector(".modal-body").scrollTop = 0;
-}
-
-// Page 2 — strategy: two levers, no second definition of margin. Other job costs are
-// 20% of revenue, so a trade must keep 53% of its own price (1 − 0.20 − 0.33 = 0.47 for
-// cost) for the job to land at 33%:
-//   price needed = cost ÷ 0.47      → charge more = price needed − insurance pays
-//   max cost     = 0.47 × insurance → cut cost by = cost − max cost
-function strategyPageHTML(rows, payout, tradeCost, per) {
-  const keep = 1 - SFC_OTHER_PCT / 100 - SFC_TARGET_MARGIN / 100;
-  const tradeTarget = Math.round((1 - keep) * 100); // 53
-  const money0 = (n) => (n == null ? "—" : Number(n).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }));
-  const cell = (n, meas, uom) => (per && uom ? (meas > 0 ? `${fmtRate(n / meas)}<span class="per">/${esc(uom)}</span>` : "—") : money0(n));
-
-  const items = rows.filter((x) => x.priced).map((x) => ({ label: x.g.trade, rcv: x.g.rcv, cost: x.cost, meas: x.meas, uom: x.uom, cls: "" }));
-  const all = [...items, { label: "Full job", rcv: payout, cost: tradeCost, meas: 0, uom: null, cls: "sfc-net" }];
-  const okOf = (i) => i.rcv > 0 && i.cost <= keep * i.rcv;
-
-  const priceRows = all.map((i) => {
-    const need = i.cost / keep;
-    return `
-      <tr class="${i.cls}">
-        <td class="left">${esc(i.label)}</td>
-        <td>${cell(i.rcv, i.meas, i.uom)}</td>
-        <td>${cell(need, i.meas, i.uom)}</td>
-        <td class="${okOf(i) ? "pos" : "neg"}">${okOf(i) ? "OK" : cell(need - i.rcv, i.meas, i.uom)}</td>
-      </tr>`;
-  });
-  const costRows = all.map((i) => {
-    const max = keep * i.rcv;
-    return `
-      <tr class="${i.cls}">
-        <td class="left">${esc(i.label)}</td>
-        <td>${cell(i.cost, i.meas, i.uom)}</td>
-        <td>${cell(max, i.meas, i.uom)}</td>
-        <td class="${okOf(i) ? "pos" : "neg"}">${okOf(i) ? "OK" : cell(i.cost - max, i.meas, i.uom)}</td>
-      </tr>`;
-  });
-
-  const block = (title, lead, heads, body) => `
-      <div class="sfc-block">
-        <h2 class="sfc-block-title">${title}</h2>
-        <p class="sfc-block-lead">${lead}</p>
-        <table class="summary sfc-est sfc-strategy">
-          <thead><tr>${heads.map((h, k) => `<th class="${k === 0 ? "left" : ""}">${h}</th>`).join("")}</tr></thead>
-          <tbody>${body.slice(0, -1).join("")}</tbody>
-          <tfoot>${body[body.length - 1]}</tfoot>
-        </table>
-      </div>`;
-
-  return `
-    <section class="page">
-      <div class="doc-head">
-        <p class="doc-eyebrow">SFC Estimate · Strategy</p>
-        <h1 class="doc-title sfc-title">${esc(sfc.client || "SFC Estimate")}</h1>
-        <p class="doc-sub">A trade needs ${tradeTarget}% margin on page 1 to leave ${SFC_TARGET_MARGIN}% after the 20% job costs. For each trade below that, pick one option.</p>
-      </div>
-      ${block("Option A — raise the price", "Supplement the claim or charge the client.", ["Trade", "Insurance pays", "Price needed", "Charge more"], priceRows)}
-      ${block("Option B — cut the cost", "Get the trade done for less.", ["Trade", "SFC cost now", "Max cost", "Cut cost by"], costRows)}
-    </section>`;
 }
 
 function closeSfcModal() {
