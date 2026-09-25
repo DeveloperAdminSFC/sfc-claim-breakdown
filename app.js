@@ -1862,16 +1862,15 @@ function renderSfcEstimate() {
       </tr>`)
     .join("");
 
-  // Page 3 — SFC scope of work: per trade, what we are doing and what it costs the homeowner.
+  // Page 3 — homeowner-facing scope: per trade, what we are doing and what it costs.
   const scopeBlocks = rows
     .map((x) => {
       const lines = [];
       if (x.rcv > 0) {
-        const n = x.g.items.filter((it) => !sfcIsCredited(it)).length;
-        lines.push(`<li>Per the insurance claim — ${n} line item${n === 1 ? "" : "s"}${x.meas != null && x.uom ? `, ${esc(x.meas)} ${esc(x.uom)}` : ""}<span class="amt">${fmtUSD(x.rcv)}</span></li>`);
+        lines.push(`<li>${esc(x.g.trade)} per the insurance claim${x.meas != null && x.uom ? ` — ${esc(x.meas)} ${esc(x.uom)}` : ""}<span class="scope-amt">${fmtUSD(x.rcv)}</span></li>`);
       }
-      for (const u of x.ups) lines.push(`<li>${esc(u.description || "Upgrade")}<span class="amt">+${fmtUSD(u.price)}</span></li>`);
-      if (x.applied > 0) lines.push(`<li class="credit">ACV credit applied<span class="amt">(${fmtUSD(x.applied)})</span></li>`);
+      for (const u of x.ups) lines.push(`<li>${esc(u.description || "Upgrade")}<span class="scope-amt">+${fmtUSD(u.price)}</span></li>`);
+      if (x.applied > 0) lines.push(`<li class="credit">Insurance ACV credit applied<span class="scope-amt">(${fmtUSD(x.applied)})</span></li>`);
       const price = x.contracted - x.applied;
       return `
       <div class="sfc-scope">
@@ -1880,6 +1879,13 @@ function renderSfcEstimate() {
       </div>`;
     })
     .join("");
+
+  // Who pays what: insurance pays the contracted RCV less the deductible; the homeowner pays
+  // the deductible plus upgrades, less any ACV credit applied and the marketing credit.
+  // insurancePays + outOfPocket === jobPrice by construction.
+  const insurancePays = payout - deductible;
+  const outOfPocket = deductible + upgrades - applied - marketing;
+  const paren = (n) => (n > 0 ? `(${fmtUSD(n)})` : fmtUSD(0));
 
   const head = (eyebrow) => `
       <div class="doc-head">
@@ -1890,7 +1896,7 @@ function renderSfcEstimate() {
 
   document.getElementById("sfcBody").innerHTML = `
     <section class="page">
-      ${head("SFC Estimate · Insurance vs SFC Pricing")}
+      ${head("SFC Estimate · Production")}
       <table class="summary sfc-est sfc-payout">
         <thead>
           <tr>
@@ -1911,18 +1917,22 @@ function renderSfcEstimate() {
     </section>
 
     <section class="page">
-      ${head("SFC Estimate · Insurance Funding &amp; Job Price")}
+      ${head("SFC Estimate · Money")}
 
-      <p class="section-label sfc-stack-label">What insurance pays for the contracted work</p>
+      <p class="section-label sfc-stack-label">Job price — who pays what</p>
       <table class="summary sfc-est sfc-stack">
         <tbody>
-          <tr><td class="left">Insurance pays for contracted work (RCV)</td><td>${fmtUSD(payout)}</td></tr>
-          <tr><td class="left sub-l">of which first check (ACV)</td><td class="sub">${fmtUSD(payoutACV)}</td></tr>
-          <tr><td class="left sub-l">of which recoverable on completion</td><td class="sub">${fmtUSD(payout - payoutACV)}</td></tr>
-          <tr><td class="left">(−) Deductible${sfc.deductible == null ? ' <span class="sfc-muted">not stated — enter it on the measurements screen</span>' : md.deductible != null && Number(md.deductible) === deductible ? ' <span class="sfc-muted">per claim</span>' : ' <span class="sfc-muted">entered</span>'}</td><td>${deductible > 0 ? `(${fmtUSD(deductible)})` : fmtUSD(0)}</td></tr>
+          <tr><td class="left">Contracted RCV <span class="sfc-muted">insurance pays for our scope</span></td><td>${fmtUSD(payout)}</td></tr>
+          <tr><td class="left sub-l">first check (ACV)</td><td class="sub">${fmtUSD(payoutACV)}</td></tr>
+          <tr><td class="left sub-l">recoverable on completion</td><td class="sub">${fmtUSD(payout - payoutACV)}</td></tr>
+          <tr><td class="left">(+) Upgrades &amp; add-ons${rows.some((x) => x.ups.length) ? ` <span class="sfc-muted">${rows.reduce((a, x) => a + x.ups.length, 0)} item${rows.reduce((a, x) => a + x.ups.length, 0) === 1 ? "" : "s"}</span>` : ""}</td><td>${fmtUSD(upgrades)}</td></tr>
+          <tr><td class="left">(−) ACV credits applied</td><td>${paren(applied)}</td></tr>
+          <tr><td class="left">(−) Marketing credit</td><td>${paren(marketing)}</td></tr>
         </tbody>
         <tfoot>
-          <tr class="sfc-net"><td class="left">Net insurance proceeds to the homeowner</td><td>${fmtUSD(payout - deductible)}</td></tr>
+          <tr class="sfc-net"><td class="left">Total job price</td><td>${fmtUSD(jobPrice)}</td></tr>
+          <tr><td class="left sub-l">paid by insurance <span class="sfc-muted">contracted RCV − deductible${sfc.deductible == null ? " (deductible not stated — enter it on the measurements screen)" : ""}</span></td><td class="sub">${fmtUSD(insurancePays)}</td></tr>
+          <tr><td class="left sub-l">paid by the homeowner <span class="sfc-muted">deductible ${fmtUSD(deductible)} + upgrades − credits</span></td><td class="sub">${fmtUSD(outOfPocket)}</td></tr>
         </tfoot>
       </table>
 
@@ -1933,30 +1943,51 @@ function renderSfcEstimate() {
         <tfoot>
           <tr><td class="left" colspan="2">Total ACV credits</td><td>${fmtUSD(acvCredits)}</td></tr>
           ${appliedRows}
-          <tr class="sfc-net"><td class="left" colspan="2">Unapplied ACV credits <span class="sfc-muted">stay with the homeowner</span></td><td>${fmtUSD(unapplied)}</td></tr>
-        </tfoot>
-      </table>
-
-      <p class="section-label sfc-stack-label">Job Price</p>
-      <table class="summary sfc-est sfc-stack">
-        <tbody>
-          <tr><td class="left">(+) Contracted RCV</td><td>${fmtUSD(payout)}</td></tr>
-          <tr><td class="left">(+) Upgrades &amp; add-ons${rows.some((x) => x.ups.length) ? ` <span class="sfc-muted">${rows.reduce((a, x) => a + x.ups.length, 0)} item${rows.reduce((a, x) => a + x.ups.length, 0) === 1 ? "" : "s"}</span>` : ""}</td><td>${fmtUSD(upgrades)}</td></tr>
-          <tr><td class="left">(−) ACV Credits applied</td><td>${applied > 0 ? `(${fmtUSD(applied)})` : fmtUSD(0)}</td></tr>
-          <tr><td class="left">(−) Marketing Credits</td><td>${marketing > 0 ? `(${fmtUSD(marketing)})` : fmtUSD(0)}</td></tr>
-        </tbody>
-        <tfoot>
-          <tr class="sfc-net"><td class="left">Total Job Price</td><td>${fmtUSD(jobPrice)}</td></tr>
+          <tr class="sfc-net"><td class="left" colspan="2">Unapplied <span class="sfc-muted">stays with the homeowner</span></td><td>${fmtUSD(unapplied)}</td></tr>
         </tfoot>
       </table>
     </section>
 
-    <section class="page">
-      ${head("SFC Estimate · Scope of Work")}
+    <section class="page sfc-homeowner">
+      <div class="doc-head">
+        <p class="doc-eyebrow">Summit First Construction · Preliminary Pricing</p>
+        <h1 class="doc-title sfc-title">${esc(client !== "—" ? client : "Preliminary Pricing")}</h1>
+        <p class="doc-sub">${esc(md.insurance_company || "")}${md.insurance_company ? " · " : ""}Claim report ${esc(crDate)} · Prepared ${new Date().toLocaleDateString("en-US")}</p>
+      </div>
+
+      <p class="section-label sfc-stack-label">Scope of work</p>
       ${scopeBlocks || `<p class="sfc-note">Nothing contracted.</p>`}
       <div class="sfc-scope sfc-scope-total">
-        <div class="sfc-scope-head"><span>Total Job Price${marketing > 0 ? ` <span class="sfc-muted">after ${fmtUSD(marketing)} marketing credit</span>` : ""}</span><span class="sfc-scope-price">${fmtUSD(jobPrice)}</span></div>
+        <div class="sfc-scope-head"><span>Total job price</span><span class="sfc-scope-price">${fmtUSD(jobPrice)}</span></div>
       </div>
+
+      <div class="ho-grid">
+        <div>
+          <p class="section-label sfc-stack-label">Your insurance claim</p>
+          <table class="summary sfc-est sfc-stack ho-table">
+            <tbody>
+              <tr><td class="left">Claim RCV for this work</td><td>${fmtUSD(payout)}</td></tr>
+              <tr><td class="left">(−) Your deductible</td><td>${paren(deductible)}</td></tr>
+            </tbody>
+            <tfoot><tr class="sfc-net"><td class="left">Insurance pays you</td><td>${fmtUSD(insurancePays)}</td></tr></tfoot>
+          </table>
+          <p class="ho-note">Insurance sends ${fmtUSD(payoutACV)} now and the remaining ${fmtUSD(payout - payoutACV)} (recoverable depreciation) once the work is complete.</p>
+        </div>
+        <div>
+          <p class="section-label sfc-stack-label">Your out-of-pocket</p>
+          <table class="summary sfc-est sfc-stack ho-table">
+            <tbody>
+              <tr><td class="left">Deductible</td><td>${fmtUSD(deductible)}</td></tr>
+              <tr><td class="left">(+) Upgrades &amp; add-ons</td><td>${fmtUSD(upgrades)}</td></tr>
+              ${applied > 0 ? `<tr><td class="left">(−) Insurance ACV credits applied</td><td>${paren(applied)}</td></tr>` : ""}
+              <tr><td class="left">(−) Marketing credit</td><td>${paren(marketing)}</td></tr>
+            </tbody>
+            <tfoot><tr class="sfc-net"><td class="left">Your out-of-pocket cost</td><td>${fmtUSD(outOfPocket)}</td></tr></tfoot>
+          </table>
+          <p class="ho-note">Insurance ${fmtUSD(insurancePays)} + you ${fmtUSD(outOfPocket)} = total job price ${fmtUSD(jobPrice)}.</p>
+        </div>
+      </div>
+      <p class="ho-fine">This is a preliminary estimate, not a binding contract. Final pricing may change with conditions found during the project or changes in scope.</p>
     </section>`;
   sfcBarMode("estimate");
   document.getElementById("sfcModal").querySelector(".modal-body").scrollTop = 0;

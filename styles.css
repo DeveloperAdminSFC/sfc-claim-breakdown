@@ -500,10 +500,17 @@ body {
 .sfc-scope-lines { list-style: none; margin: 8px 0 0; padding: 0; }
 .sfc-scope-lines li { display: flex; justify-content: space-between; gap: 16px; padding: 5px 0 5px 14px; font-size: 14px; color: var(--ink); border-bottom: 1px dashed var(--rule); }
 .sfc-scope-lines li:last-child { border-bottom: 0; }
-.sfc-scope-lines li .amt { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--ink-soft); }
-.sfc-scope-lines li.credit, .sfc-scope-lines li.credit .amt { color: var(--pos); }
+.sfc-scope-lines li .scope-amt { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--ink-soft); }
+.sfc-scope-lines li.credit, .sfc-scope-lines li.credit .scope-amt { color: var(--pos); }
 .sfc-scope-total { border-top: 3px solid #000; margin-top: 8px; }
 .sfc-scope-total .sfc-scope-head > span:first-child { font-size: 18px; font-weight: 800; color: #000; }
+/* Page 3: homeowner-facing preliminary pricing sheet */
+.ho-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin-top: 22px; }
+.ho-table td:last-child { width: 140px; }
+.ho-note { font-size: 12.5px; color: var(--ink-soft); margin: 10px 0 0; line-height: 1.5; }
+.ho-fine { font-size: 11px; color: var(--ink-faint); margin: 26px 0 0; line-height: 1.5; font-style: italic; }
+.sfc-homeowner .sfc-scope-lines li .scope-amt { color: var(--ink); }
+@media (max-width: 640px) { .ho-grid { grid-template-columns: 1fr; } }
 /* ---- Job price stack on the estimate ---- */
 .sfc-stack-label { margin-top: 6px; }
 .summary.sfc-stack + .sfc-rates + .sfc-stack-label { margin-top: 30px; }
