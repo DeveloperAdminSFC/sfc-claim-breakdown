@@ -514,6 +514,21 @@ body {
 .sfc-marketing th.trade, .sfc-marketing td.trade { width: 40%; }
 .sfc-marketing select.input { width: 260px; }
 .sfc-marketing td.num .input { width: 160px; }
+/* Completed-work flag: blue rows, whole-trade toggles in the nav bar, status badges */
+.sfc-tradenav { grid-template-columns: auto 1fr auto auto auto; }
+.sfc-tradenav-toggles { display: flex; flex-direction: column; gap: 6px; }
+.sfc-toggle { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--ink-soft); cursor: pointer; white-space: nowrap; }
+.sfc-toggle input { width: 18px; height: 18px; cursor: pointer; }
+.sfc-toggle.credit input { accent-color: var(--pos); }
+.sfc-toggle.done input { accent-color: var(--accent); }
+.sfc-lines .sfc-done { width: 20px; height: 20px; accent-color: var(--accent); cursor: pointer; vertical-align: middle; }
+.sfc-lines tr.sfc-completed td { background: #eef3fb; }
+.sfc-lines tr.sfc-completed td.acv { color: var(--accent); }
+.sfc-lines tfoot td.done-total { color: var(--accent); }
+.sfc-badge { display: inline-block; margin-left: 8px; padding: 2px 7px; border-radius: 999px; font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; vertical-align: middle; }
+.sfc-badge.complete { background: #e3ecfa; color: var(--accent); }
+.sfc-badge.partial { background: #fff4e0; color: #9a5b00; }
+.sfc-form .sfc-badge { display: inline-block; margin: 0 0 2px 8px; }
 /* ---- Job price stack on the estimate ---- */
 .sfc-stack-label { margin-top: 6px; }
 .summary.sfc-stack + .sfc-rates + .sfc-stack-label { margin-top: 30px; }

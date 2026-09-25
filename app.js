@@ -1312,7 +1312,7 @@ const SFC_BID_TRADES = new Set(["WINDOWS", "GARAGE", "SOLAR", "PAINT"]);
 let sfc = {
   pricing: null, measurements: {}, bids: {}, unlocked: {}, rateEdits: {}, client: "", perUnit: false,
   groups: [], rates: null, credits: {}, deductible: null, step: 0, itemsRef: null,
-  upgrades: [], applied: {}, marketingCredits: [],
+  upgrades: [], applied: {}, marketingCredits: [], completed: {},
 };
 // Marketing credits the homeowner can earn; each one is a typed amount on the measurements screen.
 const SFC_MARKETING_TYPES = ["Yard sign", "Referral", "Review", "Veteran discount"];
@@ -1380,16 +1380,41 @@ const sfcLineKey = (it) => state.items.indexOf(it);
 const sfcLineACV = (it) =>
   (Number(it.rcv) || 0) - (Number(it.paidWhenIncurred) || 0) - (Number(it.recoverableDep) || 0) - (Number(it.nonRecoverableDep) || 0);
 const sfcIsCredited = (it) => !!sfc.credits[sfcLineKey(it)];
+// "Work already completed": the line was produced in an earlier production (roof done, siding
+// held until the appraisal comes back). Still contracted — tracked so each production can be
+// read on its own. A line is credited OR completed, never both.
+const sfcIsCompleted = (it) => !!sfc.completed[sfcLineKey(it)];
+function sfcSetCredited(it, on) {
+  const k = sfcLineKey(it);
+  if (on) { sfc.credits[k] = true; delete sfc.completed[k]; } else delete sfc.credits[k];
+}
+function sfcSetCompleted(it, on) {
+  const k = sfcLineKey(it);
+  if (on) { sfc.completed[k] = true; delete sfc.credits[k]; } else delete sfc.completed[k];
+}
 
 // Per trade: contracted RCV (lines NOT credited) and the ACV credited (lines that are).
 function sfcContracted(g) {
-  let rcv = 0, acv = 0, credit = 0, credited = 0;
+  let rcv = 0, acv = 0, credit = 0, credited = 0, done = 0, doneCount = 0, contractedCount = 0;
   for (const it of g.items) {
     if (sfcIsCredited(it)) { credit += sfcLineACV(it); credited += 1; }
-    else { rcv += Number(it.rcv) || 0; acv += sfcLineACV(it); }
+    else {
+      rcv += Number(it.rcv) || 0; acv += sfcLineACV(it); contractedCount += 1;
+      if (sfcIsCompleted(it)) { done += Number(it.rcv) || 0; doneCount += 1; }
+    }
   }
-  return { rcv, acv, credit, credited };
+  return { rcv, acv, credit, credited, done, doneCount, contractedCount };
 }
+// Status of a trade's contracted scope: "" (nothing done), "partial" or "complete".
+function sfcStatus(c) {
+  if (c.contractedCount === 0 || c.doneCount === 0) return "";
+  return c.doneCount === c.contractedCount ? "complete" : "partial";
+}
+const sfcStatusBadge = (c) => {
+  const st = sfcStatus(c);
+  if (!st) return "";
+  return `<span class="sfc-badge ${st}">${st === "complete" ? "Completed" : `${c.doneCount} of ${c.contractedCount} done`}</span>`;
+};
 function sfcTotalCredits() {
   return state.items.reduce((a, it) => a + (sfcIsCredited(it) ? sfcLineACV(it) : 0), 0);
 }
@@ -1406,7 +1431,7 @@ async function openSfcEstimate() {
   // A different parsed claim → credits, measurements and typed figures belong to the old one.
   if (sfc.itemsRef !== state.items) {
     sfc.itemsRef = state.items;
-    sfc.credits = {}; sfc.measurements = {}; sfc.bids = {}; sfc.unlocked = {}; sfc.rateEdits = {};
+    sfc.credits = {}; sfc.completed = {}; sfc.measurements = {}; sfc.bids = {}; sfc.unlocked = {}; sfc.rateEdits = {};
     sfc.deductible = null; sfc.client = ""; sfc.groups = [];
     sfc.upgrades = []; sfc.applied = {}; sfc.marketingCredits = [];
   }
@@ -1458,14 +1483,14 @@ function renderSfcStep() {
 // box. The nav bar and the column headings stay frozen while the list scrolls.
 function renderSfcTrade(g, idx, n) {
   const dash = dashHTML;
-  const rows = g.items
-    .map((it) => {
-      const key = sfcLineKey(it);
-      const rec = Number(it.recoverableDep) || 0;
-      const nr = Number(it.nonRecoverableDep) || 0;
-      const on = sfcIsCredited(it);
-      return `
-      <tr class="${on ? "sfc-credited" : ""}" data-key="${key}">
+  const rowHTML = (it) => {
+    const key = sfcLineKey(it);
+    const rec = Number(it.recoverableDep) || 0;
+    const nr = Number(it.nonRecoverableDep) || 0;
+    const cr = sfcIsCredited(it);
+    const done = sfcIsCompleted(it);
+    return `
+      <tr class="${cr ? "sfc-credited" : done ? "sfc-completed" : ""}" data-key="${key}">
         <td class="num">${esc(it.displayNumber)}</td>
         <td class="left desc">${esc(it.description)}</td>
         <td class="left qty">${esc(it.quantity)}</td>
@@ -1473,10 +1498,13 @@ function renderSfcTrade(g, idx, n) {
         <td>${rec > 0 ? fmtUSD(rec) : dash}</td>
         <td>${nr > 0 ? fmtUSD(nr) : dash}</td>
         <td class="acv">${fmtUSD(sfcLineACV(it))}</td>
-        <td class="check"><input class="sfc-credit" type="checkbox" data-key="${key}" ${on ? "checked" : ""} title="Credit this line's ACV to the homeowner" /></td>
+        <td class="check"><input class="sfc-credit" type="checkbox" data-key="${key}" ${cr ? "checked" : ""} title="Credit this line's ACV to the homeowner" /></td>
+        <td class="check"><input class="sfc-done" type="checkbox" data-key="${key}" ${done ? "checked" : ""} title="Work already completed in an earlier production" /></td>
       </tr>`;
-    })
-    .join("");
+  };
+  const c0 = sfcContracted(g);
+  const allCredited = g.items.length > 0 && c0.credited === g.items.length;
+  const allDone = g.items.length > 0 && c0.doneCount === g.items.length;
 
   document.getElementById("sfcBody").innerHTML = `
     <div class="sfc-tradenav">
@@ -1485,31 +1513,57 @@ function renderSfcTrade(g, idx, n) {
         <span class="sfc-step">Trade ${idx + 1} of ${n}</span>
         <span class="trade-cell"><span class="trade-swatch" style="background:${g.color}"></span>${esc(g.trade)}</span>
       </div>
+      <div class="sfc-tradenav-toggles">
+        <label class="sfc-toggle credit"><input type="checkbox" id="sfcAllCredit" ${allCredited ? "checked" : ""} /> Credit entire trade</label>
+        <label class="sfc-toggle done"><input type="checkbox" id="sfcAllDone" ${allDone ? "checked" : ""} /> Trade already completed</label>
+      </div>
       <div class="sfc-tradenav-credits">ACV credits so far <b id="sfcCreditsSoFar">${fmtUSD(sfcTotalCredits())}</b></div>
       <button type="button" class="btn btn-primary btn-nav" id="sfcNextBtn" aria-label="${idx + 1 < n ? "Next trade" : "Measurements"}">${idx + 1 < n ? "Next →" : "Measurements →"}</button>
     </div>
     <table class="sfc-lines">
       <thead><tr>
         <th class="num">Line #</th><th class="left">Description</th><th class="left">Quantity</th>
-        <th>RCV</th><th>Recoverable Dep.</th><th>Non-Rec. Dep.</th><th>ACV</th><th class="check">Credit ACV</th>
+        <th>RCV</th><th>Recoverable Dep.</th><th>Non-Rec. Dep.</th><th>ACV</th><th class="check">Credit ACV</th><th class="check">Completed</th>
       </tr></thead>
-      <tbody>${rows}</tbody>
+      <tbody id="sfcTradeRows">${g.items.map(rowHTML).join("")}</tbody>
       <tfoot><tr>
         <td class="left" colspan="3">${esc(g.trade)} · ${g.items.length} line${g.items.length === 1 ? "" : "s"}</td>
         <td>${fmtUSD(g.rcv)}</td><td>${fmtUSD(g.recDep)}</td><td>${fmtUSD(g.nonRecDep)}</td><td>${fmtUSD(g.acv)}</td>
-        <td class="check credit-total" id="sfcTradeCredit">${fmtUSD(sfcContracted(g).credit)}</td>
+        <td class="check credit-total" id="sfcTradeCredit">${fmtUSD(c0.credit)}</td>
+        <td class="check done-total" id="sfcTradeDone">${fmtUSD(c0.done)}</td>
       </tr></tfoot>
     </table>`;
 
-  for (const box of document.querySelectorAll(".sfc-credit")) {
-    box.addEventListener("change", () => {
-      if (box.checked) sfc.credits[box.dataset.key] = true;
-      else delete sfc.credits[box.dataset.key];
-      box.closest("tr").classList.toggle("sfc-credited", box.checked);
-      document.getElementById("sfcCreditsSoFar").textContent = fmtUSD(sfcTotalCredits());
-      document.getElementById("sfcTradeCredit").textContent = fmtUSD(sfcContracted(g).credit);
-    });
-  }
+  // One place repaints the rows, footer, running total and the two whole-trade toggles after
+  // any flag changes, so a line box and a trade toggle can never disagree.
+  const repaint = () => {
+    document.getElementById("sfcTradeRows").innerHTML = g.items.map(rowHTML).join("");
+    const c = sfcContracted(g);
+    document.getElementById("sfcCreditsSoFar").textContent = fmtUSD(sfcTotalCredits());
+    document.getElementById("sfcTradeCredit").textContent = fmtUSD(c.credit);
+    document.getElementById("sfcTradeDone").textContent = fmtUSD(c.done);
+    document.getElementById("sfcAllCredit").checked = g.items.length > 0 && c.credited === g.items.length;
+    document.getElementById("sfcAllDone").checked = g.items.length > 0 && c.doneCount === g.items.length;
+    wireRows();
+  };
+  const byKey = new Map(g.items.map((it) => [String(sfcLineKey(it)), it]));
+  const wireRows = () => {
+    for (const box of document.querySelectorAll(".sfc-credit")) {
+      box.addEventListener("change", () => { sfcSetCredited(byKey.get(box.dataset.key), box.checked); repaint(); });
+    }
+    for (const box of document.querySelectorAll(".sfc-done")) {
+      box.addEventListener("change", () => { sfcSetCompleted(byKey.get(box.dataset.key), box.checked); repaint(); });
+    }
+  };
+  wireRows();
+  document.getElementById("sfcAllCredit").addEventListener("change", (e) => {
+    for (const it of g.items) sfcSetCredited(it, e.target.checked);
+    repaint();
+  });
+  document.getElementById("sfcAllDone").addEventListener("change", (e) => {
+    for (const it of g.items) sfcSetCompleted(it, e.target.checked);
+    repaint();
+  });
   document.getElementById("sfcPrevBtn").addEventListener("click", () => { sfc.step -= 1; renderSfcStep(); });
   document.getElementById("sfcNextBtn").addEventListener("click", () => { sfc.step += 1; renderSfcStep(); });
 }
@@ -1579,6 +1633,7 @@ function renderSfcForm() {
                  data-trade="${esc(g.trade)}" value="${applied ? esc(applied) : ""}" placeholder="$0" ${pool > 0 ? "" : "disabled"} />
         </span></td>`;
       const note =
+        sfcStatusBadge(c) +
         (c.credited ? `<span class="sfc-credited-note">${c.credited} line${c.credited === 1 ? "" : "s"} credited</span>` : "") +
         (ups.length ? `<span class="sfc-upgrade-note">${ups.length} upgrade${ups.length === 1 ? "" : "s"} +${fmtUSD(sfcUpgradeTotal(g.trade, "price"))}</span>` : "");
       const tradeCell = `<td class="trade"><span class="trade-cell"><span class="trade-swatch" style="background:${g.color}"></span>${esc(g.trade)}</span>${note}</td>`;
@@ -1792,7 +1847,7 @@ function renderSfcEstimate() {
       const contracted = rcv + upPrice;
       const applied = Number(sfc.applied[g.trade]) || 0;
       const uom = SFC_TRADE_UOM[g.trade];
-      const base = { g, rcv, acv, ups, upPrice, upCost, contracted, applied, uom, rate: null, meas: null, bid: null };
+      const base = { g, c, rcv, acv, ups, upPrice, upCost, contracted, applied, uom, rate: null, meas: null, bid: null };
       if (sfcIsClaimOnly(g.trade) || rcv <= 0) {
         // No trade-level SFC cost from history — only what the upgrades carry.
         const priced = ups.length > 0 && upCost > 0;
@@ -1835,6 +1890,9 @@ function renderSfcEstimate() {
   const marketing = sfcMarketingTotal();
   const jobPrice = contractedTotal - applied - marketing;
   const creditedLines = sfcCreditedLines();
+  // Production status: contracted RCV already produced vs still to do.
+  const doneRCV = rows.reduce((a, r) => a + r.c.done, 0);
+  const anyDone = doneRCV > 0;
 
   // Per-unit view: every dollar figure carries its unit. Job-wide rows are per roof SQ.
   const unit = (n, meas, uom) => (meas > 0 ? `${fmtRate(n / meas)}<span class="per">/${esc(uom)}</span>` : "—");
@@ -1849,7 +1907,7 @@ function renderSfcEstimate() {
       const m = x.uom && x.meas > 0 ? x.meas : 0;
       const main = `
       <tr>
-        <td class="left">${esc(x.g.trade)}</td>
+        <td class="left">${esc(x.g.trade)}${sfcStatusBadge(x.c)}</td>
         <td class="center">${x.meas != null && x.uom ? `${esc(x.meas)} ${esc(x.uom)}` : ""}</td>
         <td class="sub">${x.rcv > 0 ? cell(x.acv, m, x.uom) : "—"}</td>
         <td class="sub">${x.rcv > 0 ? cell(x.rcv, m, x.uom) : "—"}</td>
@@ -1923,7 +1981,7 @@ function renderSfcEstimate() {
       const price = x.contracted - x.applied;
       return `
       <div class="sfc-scope">
-        <div class="sfc-scope-head"><span class="trade-cell"><span class="trade-swatch" style="background:${x.g.color}"></span>${esc(x.g.trade)}</span><span class="sfc-scope-price">${fmtUSD(price)}</span></div>
+        <div class="sfc-scope-head"><span class="trade-cell"><span class="trade-swatch" style="background:${x.g.color}"></span>${esc(x.g.trade)}${sfcStatusBadge(x.c)}</span><span class="sfc-scope-price">${fmtUSD(price)}</span></div>
         <ul class="sfc-scope-lines">${lines.join("")}</ul>
       </div>`;
     })
@@ -1985,6 +2043,14 @@ function renderSfcEstimate() {
         </tfoot>
       </table>
       ${sfc.deductible == null ? `<p class="sfc-rates">Deductible not stated on the claim — enter it on the measurements screen.</p>` : ""}
+      ${anyDone ? `
+      <p class="section-label sfc-stack-label">Production status</p>
+      <table class="summary sfc-est sfc-stack">
+        <tbody>
+          <tr><td class="left">Work already completed <span class="sfc-muted">${rows.filter((x) => sfcStatus(x.c) === "complete").map((x) => x.g.trade).join(", ") || "part of a trade"}</span></td><td>${fmtUSD(doneRCV)}</td></tr>
+          <tr><td class="left">Remaining contracted work</td><td>${fmtUSD(payout - doneRCV)}</td></tr>
+        </tbody>
+      </table>` : ""}
     </section>
 
     <section class="page">
