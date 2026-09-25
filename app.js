@@ -1280,25 +1280,35 @@ async function loadSample() {
 // --------------------------- SFC Estimate --------------------------------- //
 // "Build SFC Estimate": price the claim's trades with SFC's live cost history (the
 // OI platform's /api/analytics/live-pricing — the same medians the Live Pricing page
-// shows), laid out for the production manager:
+// shows), laid out for the production manager. The flow is a guided walk:
 //
-//   trades          insurance pays (trade RCV) vs SFC cost (median cost/unit × measurement)
-//   other job costs every COGS line that is not labor or materials — per roof SQ
-//   job summary     gross profit at the insurance pay out (after trades + other job costs);
-//                   green at or above the 33% gross-margin target
+//   trade screens   one per trade on the claim, in order — every line the user categorized
+//                   into that trade with RCV / Recoverable / Non-Rec / ACV and a "Credit ACV"
+//                   box. A credited line is NOT contracted (its RCV leaves the job) and its
+//                   ACV becomes an ACV credit to the homeowner. Arrows move between trades.
+//   measurements    one measurement + SFC cost (history rate or typed bid) per contracted
+//                   trade, plus client, deductible (typed when the claim doesn't state it)
+//                   and total marketing credits.
+//   estimate        Trade | Measurement | Cost Per Unit | Claim RCV | SFC Cost | Margin, the
+//                   Other Job Costs (flat 20%) row and the Job Summary, then the price:
+//                     (+) Contracted RCV  (−) ACV Credits  (−) Marketing Credits  = Total Job Price
+//                   Upgrades are not modelled yet (deliberately — see Yash, 2026-09-25).
 //
-// One page: Trade | Measurement | Cost Per Unit | Claim RCV | SFC Cost | Margin.
-// Every rate comes from pricing history; only the measurements and client are typed.
+// Every rate comes from pricing history; only the measurements, credits and client are typed.
 const SFC_TRADE_UOM = { ROOF: "SQ", SIDING: "SF", GUTTERS: "LF", PAINT: "SF", WINDOWS: "EA", FENCE: "LF", GARAGE: "SF", SOLAR: "PNL" };
 const SFC_MIN_JOBS = 3; // fewer measured jobs than this → "no SFC rate yet"
 // Bid items: no usable history, the estimator types SFC's cost for the trade. Any other
 // trade whose history is too thin gets the same box.
 const SFC_BID_TRADES = new Set(["WINDOWS", "GARAGE", "SOLAR", "PAINT"]);
-// included: trade -> false when switched off for this production (supplements add and
-// finish trades at different times, so the estimate is rebuilt per production).
+// credits: lineKey -> true when the line's ACV is credited to the homeowner (line leaves the
+// contracted scope). lineKey = the line's index in state.items — stable for one parsed claim;
+// itemsRef remembers which claim the credits belong to so a new upload starts clean.
 // unlocked / rateEdits: a history rate is locked at the median until the estimator
 // clicks Unlock; the typed $/unit then replaces the median for that trade.
-let sfc = { pricing: null, measurements: {}, bids: {}, unlocked: {}, rateEdits: {}, included: {}, client: "", perUnit: false, groups: [], rates: null };
+let sfc = {
+  pricing: null, measurements: {}, bids: {}, unlocked: {}, rateEdits: {}, client: "", perUnit: false,
+  groups: [], rates: null, credits: {}, deductible: null, marketing: 0, step: 0, itemsRef: null,
+};
 
 // True when the trade is priced by a typed bid rather than measurement × rate.
 function sfcIsBid(trade) {
@@ -1306,7 +1316,7 @@ function sfcIsBid(trade) {
 }
 const SFC_TARGET_MARGIN = 33; // required gross margin, % of revenue
 // Other job costs (every COGS line that is not labor or materials) are always a flat
-// 20% of the included pay out — never per square (Yash's rule; history says 20.5%).
+// 20% of the contracted pay out — never per square (Yash's rule; history says 20.5%).
 const SFC_OTHER_PCT = 20;
 
 // "28.40 SQ" / "1,234.5 SF" → { value, unit }; null when the quantity has no unit.
@@ -1319,25 +1329,25 @@ function parseQuantity(q) {
 // Largest quantity in the trade's unit among its lines — the shingle line for a roof,
 // the siding line for siding. A suggestion only; the form lets the user overwrite it.
 function suggestMeasurement(items, uom) {
-  let best = 0;
+  let best = null;
   for (const it of items) {
     const q = parseQuantity(it.quantity);
-    if (q && q.unit === uom && q.value > best) best = q.value;
+    if (q && q.unit === uom && (best == null || q.value > best)) best = q.value;
   }
-  return best || null;
+  return best;
 }
 
 async function fetchLivePricing() {
   if (sfc.pricing) return sfc.pricing;
   const res = await fetch(`${BACKEND_URL}/api/analytics/live-pricing?population=all&window=all`);
-  if (!res.ok) throw new Error(`Pricing service error (${res.status}).`);
+  if (!res.ok) throw new Error(`Pricing service returned ${res.status}.`);
   sfc.pricing = await res.json();
   return sfc.pricing;
 }
 
-// Every trade on the claim with RCV — priced trades (known unit) and claim-only rows
-// (MISC, Not Categorized, personal property…) that count toward what insurance pays.
-function sfcApplicableGroups() {
+// Every trade on the claim that carries RCV, in summary order (claim-only trades included:
+// their lines can still be credited).
+function sfcTradeGroups() {
   return groupByTrade(state.items).filter((g) => g.rcv > 0);
 }
 const sfcIsClaimOnly = (trade) => !SFC_TRADE_UOM[trade];
@@ -1356,17 +1366,49 @@ const fmtRate = (n) => {
 };
 const fmtPct1 = (n) => (n == null || !Number.isFinite(n) ? "—" : `${n.toFixed(1)}%`);
 
+// ---- ACV credits ----
+// A line's ACV nets paid-when-incurred and both depreciation buckets (same identity as the
+// summary sheet). Keys are state.items indices.
+const sfcLineKey = (it) => state.items.indexOf(it);
+const sfcLineACV = (it) =>
+  (Number(it.rcv) || 0) - (Number(it.paidWhenIncurred) || 0) - (Number(it.recoverableDep) || 0) - (Number(it.nonRecoverableDep) || 0);
+const sfcIsCredited = (it) => !!sfc.credits[sfcLineKey(it)];
+
+// Per trade: contracted RCV (lines NOT credited) and the ACV credited (lines that are).
+function sfcContracted(g) {
+  let rcv = 0, credit = 0, credited = 0;
+  for (const it of g.items) {
+    if (sfcIsCredited(it)) { credit += sfcLineACV(it); credited += 1; }
+    else rcv += Number(it.rcv) || 0;
+  }
+  return { rcv, credit, credited };
+}
+function sfcTotalCredits() {
+  return state.items.reduce((a, it) => a + (sfcIsCredited(it) ? sfcLineACV(it) : 0), 0);
+}
+function sfcCreditedLines() {
+  return state.items.filter(sfcIsCredited);
+}
+
 async function openSfcEstimate() {
   if (!state.items.length) return setStatus("Nothing to estimate yet — upload a PDF first.", "error");
-  const groups = sfcApplicableGroups();
+  const groups = sfcTradeGroups();
   if (!groups.length) {
     return setStatus("No line items carry RCV yet.", "error");
   }
+  // A different parsed claim → credits, measurements and typed figures belong to the old one.
+  if (sfc.itemsRef !== state.items) {
+    sfc.itemsRef = state.items;
+    sfc.credits = {}; sfc.measurements = {}; sfc.bids = {}; sfc.unlocked = {}; sfc.rateEdits = {};
+    sfc.deductible = null; sfc.marketing = 0; sfc.client = ""; sfc.groups = [];
+  }
   if (!sfc.client && state.jobInfo && state.jobInfo.contact_name) sfc.client = state.jobInfo.contact_name;
+  const md = state.summary || {};
+  if (sfc.deductible == null && md.deductible != null) sfc.deductible = Number(md.deductible) || 0;
 
   const modal = document.getElementById("sfcModal");
   modal.hidden = false;
-  sfcBarMode("form");
+  sfcBarMode("trade");
   const body = document.getElementById("sfcBody");
   body.innerHTML = `<p class="sfc-note">Pulling SFC pricing…</p>`;
   try {
@@ -1379,22 +1421,8 @@ async function openSfcEstimate() {
     if (sfcIsClaimOnly(g.trade)) continue;
     if (sfc.measurements[g.trade] == null) sfc.measurements[g.trade] = suggestMeasurement(g.items, SFC_TRADE_UOM[g.trade]);
   }
-  // Rates straight from pricing history (Live Pricing's OTHER JOB COSTS and Pricing rows):
-  //   other job costs per roof SQ = every COGS account except labor and materials
-  //   overhead per roof SQ        = operating expenses' share of cash in × median collected per roof SQ
-  // Percent-of-pay-out fallbacks cover claims with no roof.
-  const jt = sfc.pricing.job_totals || {};
-  const oc = sfc.pricing.other_costs || {};
-  const oh = sfc.pricing.overhead || {};
-  const ohPct = oh.opex_pct_of_cash_in != null ? oh.opex_pct_of_cash_in : 15;
-  const collSq = jt.collected_per_sq && jt.collected_per_sq.median != null ? jt.collected_per_sq.median : null;
-  sfc.rates = {
-    otherPerSq: oc.per_roof_sq && oc.per_roof_sq.median != null ? oc.per_roof_sq.median : null,
-    otherPct: oc.pct_of_revenue && oc.pct_of_revenue.median != null ? oc.pct_of_revenue.median : 20,
-    ohPerSq: collSq != null ? (ohPct / 100) * collSq : null,
-    ohPct,
-  };
-  renderSfcForm(groups);
+  sfc.step = 0;
+  renderSfcStep();
 }
 
 function sfcBarMode(mode) {
@@ -1404,20 +1432,96 @@ function sfcBarMode(mode) {
   document.getElementById("sfcUomBtn").setAttribute("aria-pressed", String(sfc.perUnit));
 }
 
-// Step 1 — one measurement per applicable trade, plus client + target profit.
-function renderSfcForm(groups) {
+// The guided walk: steps 0..n-1 are the trade screens, step n is the measurements form.
+function renderSfcStep() {
+  const groups = sfcTradeGroups();
+  sfc.step = Math.max(0, Math.min(sfc.step, groups.length));
+  document.getElementById("sfcModal").querySelector(".modal-body").scrollTop = 0;
+  if (sfc.step < groups.length) {
+    sfcBarMode("trade");
+    renderSfcTrade(groups[sfc.step], sfc.step, groups.length);
+  } else {
+    sfcBarMode("form");
+    renderSfcForm();
+  }
+}
+
+// One trade: every categorized line with RCV / Recoverable / Non-Rec / ACV and a Credit ACV
+// box. The nav bar and the column headings stay frozen while the list scrolls.
+function renderSfcTrade(g, idx, n) {
+  const dash = dashHTML;
+  const rows = g.items
+    .map((it) => {
+      const key = sfcLineKey(it);
+      const rec = Number(it.recoverableDep) || 0;
+      const nr = Number(it.nonRecoverableDep) || 0;
+      const on = sfcIsCredited(it);
+      return `
+      <tr class="${on ? "sfc-credited" : ""}" data-key="${key}">
+        <td class="num">${esc(it.displayNumber)}</td>
+        <td class="left desc">${esc(it.description)}</td>
+        <td class="left qty">${esc(it.quantity)}</td>
+        <td>${fmtUSD(Number(it.rcv) || 0)}</td>
+        <td>${rec > 0 ? fmtUSD(rec) : dash}</td>
+        <td>${nr > 0 ? fmtUSD(nr) : dash}</td>
+        <td class="acv">${fmtUSD(sfcLineACV(it))}</td>
+        <td class="check"><input class="sfc-credit" type="checkbox" data-key="${key}" ${on ? "checked" : ""} title="Credit this line's ACV to the homeowner" /></td>
+      </tr>`;
+    })
+    .join("");
+
+  document.getElementById("sfcBody").innerHTML = `
+    <div class="sfc-tradenav">
+      <button type="button" class="btn btn-nav" id="sfcPrevBtn" ${idx === 0 ? "disabled" : ""} aria-label="Previous trade">←</button>
+      <div class="sfc-tradenav-title">
+        <span class="sfc-step">Trade ${idx + 1} of ${n}</span>
+        <span class="trade-cell"><span class="trade-swatch" style="background:${g.color}"></span>${esc(g.trade)}</span>
+      </div>
+      <div class="sfc-tradenav-credits">ACV credits so far <b id="sfcCreditsSoFar">${fmtUSD(sfcTotalCredits())}</b></div>
+      <button type="button" class="btn btn-primary btn-nav" id="sfcNextBtn" aria-label="${idx + 1 < n ? "Next trade" : "Measurements"}">${idx + 1 < n ? "Next →" : "Measurements →"}</button>
+    </div>
+    <table class="sfc-lines">
+      <thead><tr>
+        <th class="num">Line #</th><th class="left">Description</th><th class="left">Quantity</th>
+        <th>RCV</th><th>Recoverable Dep.</th><th>Non-Rec. Dep.</th><th>ACV</th><th class="check">Credit ACV</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+      <tfoot><tr>
+        <td class="left" colspan="3">${esc(g.trade)} · ${g.items.length} line${g.items.length === 1 ? "" : "s"}</td>
+        <td>${fmtUSD(g.rcv)}</td><td>${fmtUSD(g.recDep)}</td><td>${fmtUSD(g.nonRecDep)}</td><td>${fmtUSD(g.acv)}</td>
+        <td class="check credit-total" id="sfcTradeCredit">${fmtUSD(sfcContracted(g).credit)}</td>
+      </tr></tfoot>
+    </table>`;
+
+  for (const box of document.querySelectorAll(".sfc-credit")) {
+    box.addEventListener("change", () => {
+      if (box.checked) sfc.credits[box.dataset.key] = true;
+      else delete sfc.credits[box.dataset.key];
+      box.closest("tr").classList.toggle("sfc-credited", box.checked);
+      document.getElementById("sfcCreditsSoFar").textContent = fmtUSD(sfcTotalCredits());
+      document.getElementById("sfcTradeCredit").textContent = fmtUSD(sfcContracted(g).credit);
+    });
+  }
+  document.getElementById("sfcPrevBtn").addEventListener("click", () => { sfc.step -= 1; renderSfcStep(); });
+  document.getElementById("sfcNextBtn").addEventListener("click", () => { sfc.step += 1; renderSfcStep(); });
+}
+
+// Measurements — one measurement + SFC cost per contracted trade (a trade whose every line
+// was credited has nothing to price and is skipped), plus client, deductible and marketing.
+function renderSfcForm() {
+  const groups = sfcTradeGroups();
   const rows = groups
     .map((g) => {
+      const c = sfcContracted(g);
+      if (c.rcv <= 0) return ""; // fully credited — nothing contracted
       const uom = SFC_TRADE_UOM[g.trade];
       const rate = sfcRateFor(g.trade);
       const meas = sfc.measurements[g.trade];
       if (sfcIsClaimOnly(g.trade)) {
-        const onC = sfc.included[g.trade] !== false;
         return `
-      <tr class="${onC ? "" : "sfc-off"} sfc-claimonly">
-        <td class="check"><input class="sfc-on" type="checkbox" data-trade="${esc(g.trade)}" ${onC ? "checked" : ""} title="Include in this production" /></td>
+      <tr class="sfc-claimonly">
         <td class="trade"><span class="trade-cell"><span class="trade-swatch" style="background:${g.color}"></span>${esc(g.trade)}</span></td>
-        <td class="num rcv">${fmtUSD(g.rcv)}</td>
+        <td class="num rcv">${fmtUSD(c.rcv)}</td>
         <td class="num meas"></td>
         <td class="cost"><span class="sfc-rate"><em>claim only</em></span></td>
       </tr>`;
@@ -1438,12 +1542,10 @@ function renderSfcForm(groups) {
              <button type="button" class="btn btn-ghost btn-lock sfc-lock" data-trade="${esc(g.trade)}" title="Lock back to the median ${fmtRate(median)}">Lock</button></span>`
           : `<span class="sfc-field"><span class="sfc-rate"><b>${fmtRate(median)}</b> / ${esc(uom)}</span>
              <button type="button" class="btn btn-ghost btn-lock sfc-unlock" data-trade="${esc(g.trade)}" title="Unlock to type a different rate">Unlock</button></span>`;
-      const on = sfc.included[g.trade] !== false;
       return `
-      <tr class="${on ? "" : "sfc-off"}">
-        <td class="check"><input class="sfc-on" type="checkbox" data-trade="${esc(g.trade)}" ${on ? "checked" : ""} title="Include in this production" /></td>
-        <td class="trade"><span class="trade-cell"><span class="trade-swatch" style="background:${g.color}"></span>${esc(g.trade)}</span></td>
-        <td class="num rcv">${fmtUSD(g.rcv)}</td>
+      <tr>
+        <td class="trade"><span class="trade-cell"><span class="trade-swatch" style="background:${g.color}"></span>${esc(g.trade)}</span>${c.credited ? `<span class="sfc-credited-note">${c.credited} line${c.credited === 1 ? "" : "s"} credited</span>` : ""}</td>
+        <td class="num rcv">${fmtUSD(c.rcv)}</td>
         <td class="num meas"><span class="sfc-field">
           <input class="input sfc-meas" type="number" min="0" step="0.01" inputmode="decimal"
                  data-trade="${esc(g.trade)}" value="${meas != null ? esc(meas) : ""}" placeholder="0" />
@@ -1454,63 +1556,51 @@ function renderSfcForm(groups) {
     })
     .join("");
 
+  const credits = sfcTotalCredits();
   document.getElementById("sfcBody").innerHTML = `
+    <div class="sfc-tradenav">
+      <button type="button" class="btn btn-nav" id="sfcPrevBtn" aria-label="Back to the last trade">←</button>
+      <div class="sfc-tradenav-title"><span class="sfc-step">Measurements &amp; pricing</span><span class="trade-cell">All trades</span></div>
+      <div class="sfc-tradenav-credits">ACV credits <b>${fmtUSD(credits)}</b></div>
+      <span></span>
+    </div>
     <div class="sfc-controls">
       <label>Client <input id="sfcClient" class="input input-wide" type="text" value="${esc(sfc.client)}" placeholder="Homeowner" /></label>
+      <label>Deductible <span class="sfc-field"><input id="sfcDeductible" class="input" type="number" min="0" step="0.01" inputmode="decimal"
+             value="${sfc.deductible != null ? esc(sfc.deductible) : ""}" placeholder="$" title="From the claim when stated; type it when the appraisal leaves it off" /></span></label>
+      <label>Marketing credits <span class="sfc-field"><input id="sfcMarketing" class="input" type="number" min="0" step="0.01" inputmode="decimal"
+             value="${sfc.marketing ? esc(sfc.marketing) : ""}" placeholder="$0" /></span></label>
     </div>
     <table class="sfc-form">
-      <thead><tr><th class="check">On</th><th class="trade">Trade</th><th class="num rcv">Insurance pays</th><th class="num meas">Measurement</th><th class="cost">SFC cost</th></tr></thead>
+      <thead><tr><th class="trade">Trade</th><th class="num rcv">Contracted RCV</th><th class="num meas">Measurement</th><th class="cost">SFC cost</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
     <div class="sfc-form-foot"><button id="sfcBuildBtn" class="btn btn-primary">Build estimate →</button></div>`;
 
-  // Unlock turns a history rate into a field (prefilled with the median); Lock snaps it
-  // back to the median and forgets the edit. Re-render keeps every other input's value.
+  // Snapshot every typed value into state so a re-render (Unlock/Lock) or leaving the
+  // screen never loses input.
   const snapshotInputs = () => {
     for (const inp of document.querySelectorAll(".sfc-meas")) { const v = Number(inp.value); sfc.measurements[inp.dataset.trade] = v > 0 ? v : null; }
     for (const inp of document.querySelectorAll(".sfc-bid")) { const v = Number(inp.value); sfc.bids[inp.dataset.trade] = v > 0 ? v : null; }
     for (const inp of document.querySelectorAll(".sfc-rate-in")) { const v = Number(inp.value); sfc.rateEdits[inp.dataset.trade] = v > 0 ? v : null; }
     sfc.client = document.getElementById("sfcClient").value.trim();
+    const d = document.getElementById("sfcDeductible").value;
+    sfc.deductible = d === "" ? null : Math.max(0, Number(d) || 0);
+    sfc.marketing = Math.max(0, Number(document.getElementById("sfcMarketing").value) || 0);
   };
   for (const btn of document.querySelectorAll(".sfc-unlock")) {
-    btn.addEventListener("click", () => { snapshotInputs(); sfc.unlocked[btn.dataset.trade] = true; renderSfcForm(groups); });
+    btn.addEventListener("click", () => { snapshotInputs(); sfc.unlocked[btn.dataset.trade] = true; renderSfcForm(); });
   }
   for (const btn of document.querySelectorAll(".sfc-lock")) {
-    btn.addEventListener("click", () => { snapshotInputs(); sfc.unlocked[btn.dataset.trade] = false; sfc.rateEdits[btn.dataset.trade] = null; renderSfcForm(groups); });
+    btn.addEventListener("click", () => { snapshotInputs(); sfc.unlocked[btn.dataset.trade] = false; sfc.rateEdits[btn.dataset.trade] = null; renderSfcForm(); });
   }
-
-  // Flip the row's dimmed look live, and record the switch, so toggling never waits
-  // for a rebuild and the inputs stay editable either way.
-  for (const box of document.querySelectorAll(".sfc-on")) {
-    box.addEventListener("change", () => {
-      sfc.included[box.dataset.trade] = box.checked;
-      box.closest("tr").classList.toggle("sfc-off", !box.checked);
-    });
-  }
-
-  document.getElementById("sfcBuildBtn").addEventListener("click", () => {
-    for (const inp of document.querySelectorAll(".sfc-meas")) {
-      const v = Number(inp.value);
-      sfc.measurements[inp.dataset.trade] = v > 0 ? v : null;
-    }
-    for (const inp of document.querySelectorAll(".sfc-bid")) {
-      const v = Number(inp.value);
-      sfc.bids[inp.dataset.trade] = v > 0 ? v : null;
-    }
-    for (const inp of document.querySelectorAll(".sfc-rate-in")) {
-      const v = Number(inp.value);
-      sfc.rateEdits[inp.dataset.trade] = v > 0 ? v : null;
-    }
-    for (const inp of document.querySelectorAll(".sfc-on")) sfc.included[inp.dataset.trade] = inp.checked;
-    sfc.client = document.getElementById("sfcClient").value.trim();
-    renderSfcEstimate(groups);
-  });
+  document.getElementById("sfcPrevBtn").addEventListener("click", () => { snapshotInputs(); sfc.step -= 1; renderSfcStep(); });
+  document.getElementById("sfcBuildBtn").addEventListener("click", () => { snapshotInputs(); renderSfcEstimate(groups); });
 }
 
-// Step 2 — the estimate: trades, other job costs / SQ, overhead / SQ, net, SFC prices.
+// The estimate: trades, other job costs, job summary, then the job price.
 function renderSfcEstimate(allGroups) {
   sfc.groups = allGroups;
-  const groups = allGroups.filter((g) => sfc.included[g.trade] !== false);
   const md = state.summary || {};
   const client = sfc.client || "—";
   const crDate = (() => {
@@ -1521,38 +1611,47 @@ function renderSfcEstimate(allGroups) {
   const money0 = (n) => (n == null ? "—" : Number(n).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }));
   const pctCls = (pct) => (pct == null ? "" : pct >= SFC_TARGET_MARGIN ? "pos" : "neg");
 
-  // Trades
-  const rows = groups.map((g) => {
-    const uom = SFC_TRADE_UOM[g.trade];
-    if (sfcIsClaimOnly(g.trade)) {
-      return { g, uom: null, rate: null, meas: null, bid: null, priced: false, cost: null, profit: null, pct: null };
-    }
-    const rate = sfcRateFor(g.trade);
-    const meas = sfc.measurements[g.trade];
-    const bid = sfcIsBid(g.trade) ? sfc.bids[g.trade] : null;
-    const perUnitRate = rate ? (sfc.unlocked[g.trade] && sfc.rateEdits[g.trade] != null ? sfc.rateEdits[g.trade] : rate.cost.median) : null;
-    const priced = bid != null ? bid > 0 : perUnitRate != null && meas != null && meas > 0;
-    const cost = !priced ? null : bid != null ? bid : perUnitRate * meas;
-    const profit = priced ? g.rcv - cost : null;
-    const pct = priced && g.rcv > 0 ? (profit / g.rcv) * 100 : null;
-    return { g, uom, rate, meas, bid, priced, cost, profit, pct };
-  });
-  // Insurance pays = the full RCV of every switched-on trade, priced or not.
+  // Trades — contracted scope only (credited lines are out of the job).
+  const rows = allGroups
+    .map((g) => ({ g, c: sfcContracted(g) }))
+    .filter(({ c }) => c.rcv > 0)
+    .map(({ g, c }) => {
+      const rcv = c.rcv;
+      const uom = SFC_TRADE_UOM[g.trade];
+      if (sfcIsClaimOnly(g.trade)) {
+        return { g, rcv, uom: null, rate: null, meas: null, bid: null, priced: false, cost: null, profit: null, pct: null };
+      }
+      const rate = sfcRateFor(g.trade);
+      const meas = sfc.measurements[g.trade];
+      const bid = sfcIsBid(g.trade) ? sfc.bids[g.trade] : null;
+      const perUnitRate = rate ? (sfc.unlocked[g.trade] && sfc.rateEdits[g.trade] != null ? sfc.rateEdits[g.trade] : rate.cost.median) : null;
+      const priced = bid != null ? bid > 0 : perUnitRate != null && meas != null && meas > 0;
+      const cost = !priced ? null : bid != null ? bid : perUnitRate * meas;
+      const profit = priced ? rcv - cost : null;
+      const pct = priced && rcv > 0 ? (profit / rcv) * 100 : null;
+      return { g, rcv, uom, rate, meas, bid, priced, cost, profit, pct };
+    });
+  // Contracted pay out = the contracted RCV of every trade, priced or not.
   const priced = rows.filter((r) => r.priced);
-  const payout = rows.reduce((a, r) => a + r.g.rcv, 0);
+  const payout = rows.reduce((a, r) => a + r.rcv, 0);
   const tradeCost = priced.reduce((a, r) => a + r.cost, 0);
 
-  // Other job costs: always 20% of the included pay out. Roof squares only feed the
+  // Other job costs: always 20% of the contracted pay out. Roof squares only feed the
   // per-unit view of the job-wide rows.
   const roofRow = rows.find((x) => x.g.trade === "ROOF" && x.priced && x.meas > 0);
   const roofSq = roofRow ? roofRow.meas : 0;
   const other = payout * (SFC_OTHER_PCT / 100);
 
-  // Gross profit at the insurance pay out (overhead is not charged to the job)
+  // Gross profit at the contracted pay out (overhead is not charged to the job)
   const totalCost = tradeCost + other;
   const net = payout - totalCost;
   const netPct = payout > 0 ? (net / payout) * 100 : null;
 
+  // Job price: (+) Contracted RCV (−) ACV credits (−) Marketing credits. Upgrades: not yet.
+  const acvCredits = sfcTotalCredits();
+  const marketing = Number(sfc.marketing) || 0;
+  const jobPrice = payout - acvCredits - marketing;
+  const creditedLines = sfcCreditedLines();
 
   // Per-unit view: every dollar figure carries its unit. Job-wide rows are per roof SQ.
   const unit = (n, meas, uom) => (meas > 0 ? `${fmtRate(n / meas)}<span class="per">/${esc(uom)}</span>` : "—");
@@ -1573,7 +1672,7 @@ function renderSfcEstimate(allGroups) {
         <td class="left">${esc(x.g.trade)}</td>
         <td class="center">${x.meas != null ? `${esc(x.meas)} ${esc(x.uom)}` : ""}</td>
         <td>${costPerUnit(x)}</td>
-        <td>${x.uom ? cell(x.g.rcv, x.meas, x.uom) : money0(x.g.rcv)}</td>
+        <td>${x.uom ? cell(x.rcv, x.meas, x.uom) : money0(x.rcv)}</td>
         <td>${x.priced ? cell(x.cost, x.meas, x.uom) : "—"}</td>
         <td class="${pctCls(x.pct)}">${x.priced ? fmtPct1(x.pct) : "—"}</td>
       </tr>`)
@@ -1600,6 +1699,15 @@ function renderSfcEstimate(allGroups) {
         <td class="${marginCls}">${fmtPct1(marginPct)}</td>
       </tr>`;
 
+  const creditRows = creditedLines
+    .map((it) => `
+      <tr>
+        <td class="left">${esc(it.trade || "Not Categorized")}</td>
+        <td class="left desc">${esc(it.displayNumber)} · ${esc(it.description)}</td>
+        <td>${fmtUSD(sfcLineACV(it))}</td>
+      </tr>`)
+    .join("");
+
   document.getElementById("sfcBody").innerHTML = `
     <section class="page">
       <div class="doc-head">
@@ -1620,6 +1728,26 @@ function renderSfcEstimate(allGroups) {
           ${jobRow("Job Summary", "sfc-net", payout, totalCost, netPct, pctCls(netPct))}
         </tfoot>
       </table>
+
+      <p class="section-label sfc-stack-label">Job Price</p>
+      <table class="summary sfc-est sfc-stack">
+        <tbody>
+          <tr><td class="left">(+) Contracted RCV</td><td>${fmtUSD(payout)}</td></tr>
+          <tr><td class="left">(−) ACV Credits${creditedLines.length ? ` <span class="sfc-muted">${creditedLines.length} line${creditedLines.length === 1 ? "" : "s"}</span>` : ""}</td><td>${acvCredits > 0 ? `(${fmtUSD(acvCredits)})` : fmtUSD(0)}</td></tr>
+          <tr><td class="left">(−) Marketing Credits</td><td>${marketing > 0 ? `(${fmtUSD(marketing)})` : fmtUSD(0)}</td></tr>
+        </tbody>
+        <tfoot>
+          <tr class="sfc-net"><td class="left">Total Job Price</td><td>${fmtUSD(jobPrice)}</td></tr>
+        </tfoot>
+      </table>
+      <p class="sfc-rates">Deductible ${sfc.deductible != null ? `<b>${fmtUSD(sfc.deductible)}</b>` : "<b>—</b>"} (${md.deductible != null ? "per claim" : "entered"}) — recorded, not applied to the job price.</p>
+      ${creditedLines.length ? `
+      <p class="section-label sfc-stack-label">ACV Credits</p>
+      <table class="summary sfc-est sfc-credits">
+        <thead><tr><th class="left">Trade</th><th class="left">Line</th><th>ACV</th></tr></thead>
+        <tbody>${creditRows}</tbody>
+        <tfoot><tr><td class="left" colspan="2">Total ACV credits</td><td>${fmtUSD(acvCredits)}</td></tr></tfoot>
+      </table>` : ""}
     </section>`;
   sfcBarMode("estimate");
   document.getElementById("sfcModal").querySelector(".modal-body").scrollTop = 0;
@@ -1708,9 +1836,9 @@ function init() {
     );
   });
 
-  // SFC Estimate: measurements → pricing vs insurance. Back returns to the form.
+  // SFC Estimate: trade screens → measurements → estimate. Back returns to measurements.
   document.getElementById("sfcBtn").addEventListener("click", openSfcEstimate);
-  document.getElementById("sfcBackBtn").addEventListener("click", () => { sfcBarMode("form"); renderSfcForm(sfcApplicableGroups()); });
+  document.getElementById("sfcBackBtn").addEventListener("click", () => { sfc.step = sfcTradeGroups().length; renderSfcStep(); });
   document.getElementById("sfcUomBtn").addEventListener("click", () => {
     sfc.perUnit = !sfc.perUnit;
     document.getElementById("sfcUomBtn").setAttribute("aria-pressed", String(sfc.perUnit));

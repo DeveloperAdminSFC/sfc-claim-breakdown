@@ -435,6 +435,38 @@ body {
 .sfc-rate em { font-style: normal; color: var(--ink-faint); font-size: 13px; }
 .sfc-form-foot { display: flex; justify-content: flex-end; gap: 8px; padding-top: 6px; }
 .sfc-form-foot .btn { height: 44px; padding: 0 22px; font-size: 15px; }
+/* ---- Guided walk: trade screens (Credit ACV) ---- */
+/* The nav bar and the column headings freeze at the top of the modal's scroll area. */
+.sfc-tradenav { position: sticky; top: -20px; z-index: 3; display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 16px; background: #fff; margin: -20px -20px 14px; padding: 14px 20px; border-bottom: 1px solid var(--rule); min-height: 64px; }
+.sfc-tradenav-title { display: flex; flex-direction: column; gap: 2px; }
+.sfc-tradenav-title .sfc-step { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-faint); }
+.sfc-tradenav-title .trade-cell { font-size: 20px; font-weight: 800; color: var(--ink); }
+.sfc-tradenav-credits { font-size: 13px; color: var(--ink-soft); white-space: nowrap; }
+.sfc-tradenav-credits b { display: block; font-size: 18px; color: var(--pos); font-variant-numeric: tabular-nums; }
+.btn-nav { height: 44px; min-width: 56px; padding: 0 18px; font-size: 16px; font-weight: 700; }
+.sfc-lines { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 14px; }
+.sfc-lines thead th { position: sticky; top: 44px; z-index: 2; background: #fff; text-align: right; font-size: 10.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-faint); padding: 8px 10px 9px; border-bottom: 2px solid var(--rule-strong); white-space: nowrap; }
+.sfc-lines th.left, .sfc-lines td.left { text-align: left; }
+.sfc-lines th.num, .sfc-lines td.num { text-align: left; width: 56px; color: var(--ink-faint); }
+.sfc-lines td { padding: 9px 10px; border-bottom: 1px solid var(--rule); text-align: right; font-variant-numeric: tabular-nums; vertical-align: middle; }
+.sfc-lines td.desc { max-width: 360px; }
+.sfc-lines td.qty { color: var(--ink-soft); white-space: nowrap; }
+.sfc-lines td.acv { font-weight: 700; color: var(--ink); }
+.sfc-lines th.check, .sfc-lines td.check { text-align: center; width: 92px; }
+.sfc-lines .sfc-credit { width: 20px; height: 20px; accent-color: var(--pos); cursor: pointer; vertical-align: middle; }
+.sfc-lines tr.sfc-credited td { background: #ecfdf3; }
+.sfc-lines tr.sfc-credited td.acv { color: var(--pos); }
+.sfc-lines tfoot td { font-weight: 700; color: var(--ink); border-top: 2px solid var(--rule-strong); border-bottom: 0; padding-top: 12px; }
+.sfc-lines tfoot td.credit-total { color: var(--pos); }
+.sfc-form .sfc-credited-note { display: block; font-size: 11.5px; font-weight: 600; color: var(--pos); margin-top: 2px; }
+.sfc-controls .sfc-field .input { width: 140px; text-align: right; }
+/* ---- Job price stack on the estimate ---- */
+.sfc-stack-label { margin-top: 26px; }
+.summary.sfc-stack, .summary.sfc-credits { width: 100%; }
+.summary.sfc-stack td:last-child, .summary.sfc-credits td:last-child { width: 180px; }
+.summary.sfc-stack tbody td.left { font-weight: 600; }
+.summary.sfc-credits td.desc { font-weight: 500; white-space: normal; }
+.sfc-muted { font-weight: 500; color: var(--ink-faint); font-size: 12px; margin-left: 6px; }
 /* Job P&L for the production manager: big numbers, one accent for margin. */
 .summary.sfc-est { font-size: 15px; table-layout: auto; }
 .summary.sfc-est thead th { font-size: 10.5px; padding: 8px 8px; white-space: normal; }
