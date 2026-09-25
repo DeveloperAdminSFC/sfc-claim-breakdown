@@ -531,6 +531,7 @@ body {
 .sfc-form .sfc-badge { display: inline-block; margin: 0 0 2px 8px; }
 /* ---- Job price stack on the estimate ---- */
 .sfc-stack-label { margin-top: 6px; }
+.summary.sfc-payout + .sfc-stack-label { margin-top: 34px; }
 .summary.sfc-stack + .sfc-rates + .sfc-stack-label { margin-top: 30px; }
 .summary.sfc-stack, .summary.sfc-credits { width: 100%; }
 .summary.sfc-stack td:last-child, .summary.sfc-credits td:last-child { width: 180px; }

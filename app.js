@@ -2021,6 +2021,14 @@ function renderSfcEstimate() {
           ${jobRow("Job Summary", "sfc-net", payoutACV, payout, contractedTotal, totalCost, netPct, pctCls(netPct))}
         </tfoot>
       </table>
+      ${anyDone ? `
+      <p class="section-label sfc-stack-label">Production status</p>
+      <table class="summary sfc-est sfc-stack">
+        <tbody>
+          <tr><td class="left">Work already completed <span class="sfc-muted">${rows.filter((x) => sfcStatus(x.c) === "complete").map((x) => x.g.trade).join(", ") || "part of a trade"}</span></td><td>${fmtUSD(doneRCV)}</td></tr>
+          <tr><td class="left">Remaining contracted work</td><td>${fmtUSD(payout - doneRCV)}</td></tr>
+        </tbody>
+      </table>` : ""}
     </section>
 
     <section class="page">
@@ -2043,14 +2051,6 @@ function renderSfcEstimate() {
         </tfoot>
       </table>
       ${sfc.deductible == null ? `<p class="sfc-rates">Deductible not stated on the claim — enter it on the measurements screen.</p>` : ""}
-      ${anyDone ? `
-      <p class="section-label sfc-stack-label">Production status</p>
-      <table class="summary sfc-est sfc-stack">
-        <tbody>
-          <tr><td class="left">Work already completed <span class="sfc-muted">${rows.filter((x) => sfcStatus(x.c) === "complete").map((x) => x.g.trade).join(", ") || "part of a trade"}</span></td><td>${fmtUSD(doneRCV)}</td></tr>
-          <tr><td class="left">Remaining contracted work</td><td>${fmtUSD(payout - doneRCV)}</td></tr>
-        </tbody>
-      </table>` : ""}
     </section>
 
     <section class="page">
@@ -2098,8 +2098,10 @@ function renderSfcEstimate() {
             <tbody>
               <tr><td class="left">Deductible</td><td>${fmtUSD(deductible)}</td></tr>
               <tr><td class="left">(+) Upgrades &amp; add-ons</td><td>${fmtUSD(upgrades)}</td></tr>
-              ${applied > 0 ? `<tr><td class="left">(−) Insurance ACV credits applied</td><td>${paren(applied)}</td></tr>` : ""}
-              ${sfc.marketingCredits.map((m) => `<tr><td class="left">(−) ${esc(m.type)} credit</td><td>${paren(Number(m.amount) || 0)}</td></tr>`).join("")}
+              <tr><td class="left">(−) Insurance ACV credits applied</td><td>${paren(applied)}</td></tr>
+              ${sfc.marketingCredits.length
+                ? sfc.marketingCredits.map((m) => `<tr><td class="left">(−) ${esc(m.type)} credit</td><td>${paren(Number(m.amount) || 0)}</td></tr>`).join("")
+                : `<tr><td class="left">(−) Marketing credits</td><td>${fmtUSD(0)}</td></tr>`}
             </tbody>
             <tfoot><tr class="sfc-net"><td class="left">Your out-of-pocket cost</td><td>${fmtUSD(outOfPocket)}</td></tr></tfoot>
           </table>
