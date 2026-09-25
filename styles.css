@@ -467,6 +467,43 @@ body {
 .summary.sfc-payout td.sub { font-weight: 500; color: var(--ink-soft); }
 .summary.sfc-payout tfoot td.sub { font-weight: 600; }
 .summary.sfc-payout tbody td.sub:first-of-type, .summary.sfc-payout tfoot td.sub:first-of-type, .summary.sfc-payout thead th.sub:first-of-type { border-left: 1px solid var(--rule); }
+/* ---- Measurements: 5-column form, upgrades table, credit pool ---- */
+.sfc-form-5 th.trade, .sfc-form-5 td.trade { width: 22%; }
+.sfc-form-5 th.rcv, .sfc-form-5 td.rcv { width: 14%; }
+.sfc-form-5 th.meas, .sfc-form-5 td.meas { width: 20%; }
+.sfc-form-5 th.credit, .sfc-form-5 td.credit { width: 17%; }
+.sfc-form-5 .sfc-apply { width: 128px; }
+.sfc-form .sfc-upgrade-note { display: block; font-size: 11.5px; font-weight: 600; color: var(--accent); margin-top: 2px; }
+.sfc-tradenav-credits .sfc-pool { display: block; font-size: 11.5px; color: var(--ink-faint); font-weight: 500; }
+.sfc-upgrades-label { margin: 8px 0 6px; }
+.sfc-upgrades-label .sfc-muted { text-transform: none; letter-spacing: 0; font-weight: 500; }
+.sfc-upgrades { margin-bottom: 6px; }
+.sfc-upgrades td { padding: 8px 8px; }
+.sfc-upgrades .input { width: 100%; min-width: 0; text-align: left; font-weight: 600; }
+.sfc-upgrades .input-wide { width: 100%; }
+.sfc-upgrades td.num .input { text-align: right; }
+.sfc-upgrades select.input { height: 42px; font-size: 15px; padding: 0 8px; }
+.sfc-upgrades th.trade, .sfc-upgrades td.trade { width: 20%; }
+.sfc-upgrades th.num, .sfc-upgrades td.num { width: 16%; }
+.sfc-upgrade-foot { display: flex; justify-content: flex-start; margin: 0 0 18px; }
+/* Estimate page 1: upgrade sub-rows under their trade */
+.summary.sfc-est tr.sfc-up-row td { font-weight: 500; color: var(--ink-soft); font-size: 13px; padding-top: 4px; padding-bottom: 8px; border-bottom: 1px solid var(--rule); }
+.summary.sfc-est tr.sfc-up-row td.up { padding-left: 22px; }
+/* Page 2: funding sub-lines */
+.summary.sfc-stack td.sub-l { padding-left: 22px; font-weight: 500; color: var(--ink-soft); font-size: 13px; }
+.summary.sfc-stack td.sub { font-weight: 500; color: var(--ink-soft); font-size: 13px; }
+/* Page 3: scope of work */
+.sfc-scope { border-top: 2px solid var(--rule-strong); padding: 14px 0 10px; }
+.sfc-scope-head { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; }
+.sfc-scope-head .trade-cell { font-size: 18px; font-weight: 800; color: #000; }
+.sfc-scope-price { font-size: 20px; font-weight: 800; color: #000; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sfc-scope-lines { list-style: none; margin: 8px 0 0; padding: 0; }
+.sfc-scope-lines li { display: flex; justify-content: space-between; gap: 16px; padding: 5px 0 5px 14px; font-size: 14px; color: var(--ink); border-bottom: 1px dashed var(--rule); }
+.sfc-scope-lines li:last-child { border-bottom: 0; }
+.sfc-scope-lines li .amt { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--ink-soft); }
+.sfc-scope-lines li.credit, .sfc-scope-lines li.credit .amt { color: var(--pos); }
+.sfc-scope-total { border-top: 3px solid #000; margin-top: 8px; }
+.sfc-scope-total .sfc-scope-head > span:first-child { font-size: 18px; font-weight: 800; color: #000; }
 /* ---- Job price stack on the estimate ---- */
 .sfc-stack-label { margin-top: 6px; }
 .summary.sfc-stack + .sfc-rates + .sfc-stack-label { margin-top: 30px; }
