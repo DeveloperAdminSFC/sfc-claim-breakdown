@@ -1376,12 +1376,12 @@ const sfcIsCredited = (it) => !!sfc.credits[sfcLineKey(it)];
 
 // Per trade: contracted RCV (lines NOT credited) and the ACV credited (lines that are).
 function sfcContracted(g) {
-  let rcv = 0, credit = 0, credited = 0;
+  let rcv = 0, acv = 0, credit = 0, credited = 0;
   for (const it of g.items) {
     if (sfcIsCredited(it)) { credit += sfcLineACV(it); credited += 1; }
-    else rcv += Number(it.rcv) || 0;
+    else { rcv += Number(it.rcv) || 0; acv += sfcLineACV(it); }
   }
-  return { rcv, credit, credited };
+  return { rcv, acv, credit, credited };
 }
 function sfcTotalCredits() {
   return state.items.reduce((a, it) => a + (sfcIsCredited(it) ? sfcLineACV(it) : 0), 0);
@@ -1617,9 +1617,10 @@ function renderSfcEstimate(allGroups) {
     .filter(({ c }) => c.rcv > 0)
     .map(({ g, c }) => {
       const rcv = c.rcv;
+      const acv = c.acv;
       const uom = SFC_TRADE_UOM[g.trade];
       if (sfcIsClaimOnly(g.trade)) {
-        return { g, rcv, uom: null, rate: null, meas: null, bid: null, priced: false, cost: null, profit: null, pct: null };
+        return { g, rcv, acv, uom: null, rate: null, meas: null, bid: null, priced: false, cost: null, profit: null, pct: null };
       }
       const rate = sfcRateFor(g.trade);
       const meas = sfc.measurements[g.trade];
@@ -1629,11 +1630,12 @@ function renderSfcEstimate(allGroups) {
       const cost = !priced ? null : bid != null ? bid : perUnitRate * meas;
       const profit = priced ? rcv - cost : null;
       const pct = priced && rcv > 0 ? (profit / rcv) * 100 : null;
-      return { g, rcv, uom, rate, meas, bid, priced, cost, profit, pct };
+      return { g, rcv, acv, uom, rate, meas, bid, priced, cost, profit, pct };
     });
   // Contracted pay out = the contracted RCV of every trade, priced or not.
   const priced = rows.filter((r) => r.priced);
   const payout = rows.reduce((a, r) => a + r.rcv, 0);
+  const payoutACV = rows.reduce((a, r) => a + r.acv, 0);
   const tradeCost = priced.reduce((a, r) => a + r.cost, 0);
 
   // Other job costs: always 20% of the contracted pay out. Roof squares only feed the
@@ -1656,22 +1658,18 @@ function renderSfcEstimate(allGroups) {
   // Per-unit view: every dollar figure carries its unit. Job-wide rows are per roof SQ.
   const unit = (n, meas, uom) => (meas > 0 ? `${fmtRate(n / meas)}<span class="per">/${esc(uom)}</span>` : "—");
   const cell = (n, meas, uom) => (per ? unit(n, meas, uom) : money0(n));
-  const span = 3; // Trade + Measurement + Cost Per Unit
+  const span = 2; // Trade + Measurement
 
-  // Cost per unit: the history rate (or the unlocked edit) for a measured trade; a bid
-  // spread over its measurement when one was typed; otherwise nothing to show.
-  const costPerUnit = (x) => {
-    if (!x.priced || !x.uom) return "—";
-    const rate = x.bid != null ? (x.meas > 0 ? x.bid / x.meas : null) : x.cost / x.meas;
-    return rate == null ? "—" : `${fmtRate(rate)}<span class="per">/${esc(x.uom)}</span>`;
-  };
-
+  // Columns: Trade | Measurement | Insurance Payout (ACV | RCV) | Contracted Amount | SFC Cost |
+  // Profit Margin. Insurance payout is the trade's contracted lines (credited lines sit on the
+  // ACV-credits page). Contracted Amount = contracted RCV until upgrades are modelled.
   const tradeRows = rows
     .map((x) => `
       <tr>
         <td class="left">${esc(x.g.trade)}</td>
         <td class="center">${x.meas != null ? `${esc(x.meas)} ${esc(x.uom)}` : ""}</td>
-        <td>${costPerUnit(x)}</td>
+        <td class="sub">${x.uom ? cell(x.acv, x.meas, x.uom) : money0(x.acv)}</td>
+        <td class="sub">${x.uom ? cell(x.rcv, x.meas, x.uom) : money0(x.rcv)}</td>
         <td>${x.uom ? cell(x.rcv, x.meas, x.uom) : money0(x.rcv)}</td>
         <td>${x.priced ? cell(x.cost, x.meas, x.uom) : "—"}</td>
         <td class="${pctCls(x.pct)}">${x.priced ? fmtPct1(x.pct) : "—"}</td>
@@ -1684,16 +1682,19 @@ function renderSfcEstimate(allGroups) {
       <tr>
         <td class="left">${esc(label)}</td>
         <td></td>
-        <td></td>
+        <td class="sub"></td>
+        <td class="sub"></td>
         <td></td>
         <td>${per ? `${esc(pct)}%` : money0(amount)}</td>
         <td></td>
       </tr>`;
 
-  // Full-job row: revenue | cost | margin.
-  const jobRow = (label, cls, revenue, cost, marginPct, marginCls) => `
+  // Full-job row: payout ACV | payout RCV | contracted | cost | margin.
+  const jobRow = (label, cls, acv, revenue, cost, marginPct, marginCls) => `
       <tr class="${cls}">
         <td class="left" colspan="${span}">${esc(label)}</td>
+        <td class="sub">${cell(acv, roofSq, "SQ")}</td>
+        <td class="sub">${cell(revenue, roofSq, "SQ")}</td>
         <td>${cell(revenue, roofSq, "SQ")}</td>
         <td>${cell(cost, roofSq, "SQ")}</td>
         <td class="${marginCls}">${fmtPct1(marginPct)}</td>
@@ -1715,19 +1716,31 @@ function renderSfcEstimate(allGroups) {
         <h1 class="doc-title sfc-title">${esc(client !== "—" ? client : "SFC Estimate")}</h1>
         <p class="doc-sub">${esc(md.insurance_company || "")}${md.insurance_company ? " · " : ""}Claim report ${esc(crDate)}</p>
       </div>
-      <table class="summary sfc-est">
-        <thead><tr>
-          <th class="left">Trade</th><th class="center">Measurement</th><th>Cost Per Unit</th>
-          <th>Claim RCV</th><th>SFC Cost</th><th>Margin</th>
-        </tr></thead>
+      <table class="summary sfc-est sfc-payout">
+        <thead>
+          <tr>
+            <th class="left" rowspan="2">Trade</th><th class="center" rowspan="2">Measurement</th>
+            <th class="group" colspan="2">Insurance Payout Breakdown</th>
+            <th rowspan="2">Contracted Amount</th><th rowspan="2">SFC Cost</th><th rowspan="2">Profit Margin</th>
+          </tr>
+          <tr><th class="sub">ACV</th><th class="sub">RCV</th></tr>
+        </thead>
         <tbody>
           ${tradeRows}
           ${sqRow("Other Job Costs", other, SFC_OTHER_PCT)}
         </tbody>
         <tfoot>
-          ${jobRow("Job Summary", "sfc-net", payout, totalCost, netPct, pctCls(netPct))}
+          ${jobRow("Job Summary", "sfc-net", payoutACV, payout, totalCost, netPct, pctCls(netPct))}
         </tfoot>
       </table>
+    </section>
+
+    <section class="page">
+      <div class="doc-head">
+        <p class="doc-eyebrow">SFC Estimate · Job Price &amp; ACV Credits</p>
+        <h1 class="doc-title sfc-title">${esc(client !== "—" ? client : "SFC Estimate")}</h1>
+        <p class="doc-sub">${esc(md.insurance_company || "")}${md.insurance_company ? " · " : ""}Claim report ${esc(crDate)}</p>
+      </div>
 
       <p class="section-label sfc-stack-label">Job Price</p>
       <table class="summary sfc-est sfc-stack">

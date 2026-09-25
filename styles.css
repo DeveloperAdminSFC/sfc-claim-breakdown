@@ -460,8 +460,16 @@ body {
 .sfc-lines tfoot td.credit-total { color: var(--pos); }
 .sfc-form .sfc-credited-note { display: block; font-size: 11.5px; font-weight: 600; color: var(--pos); margin-top: 2px; }
 .sfc-controls .sfc-field .input { width: 140px; text-align: right; }
+/* Insurance payout breakdown: grouped ACV | RCV sub-columns under one heading. */
+.summary.sfc-payout thead th { vertical-align: bottom; }
+.summary.sfc-payout thead th.group { text-align: center; border-bottom: 1px solid var(--rule); padding-bottom: 4px; }
+.summary.sfc-payout thead th.sub { padding-top: 4px; }
+.summary.sfc-payout td.sub { font-weight: 500; color: var(--ink-soft); }
+.summary.sfc-payout tfoot td.sub { font-weight: 600; }
+.summary.sfc-payout tbody td.sub:first-of-type, .summary.sfc-payout tfoot td.sub:first-of-type, .summary.sfc-payout thead th.sub:first-of-type { border-left: 1px solid var(--rule); }
 /* ---- Job price stack on the estimate ---- */
-.sfc-stack-label { margin-top: 26px; }
+.sfc-stack-label { margin-top: 6px; }
+.summary.sfc-stack + .sfc-rates + .sfc-stack-label { margin-top: 30px; }
 .summary.sfc-stack, .summary.sfc-credits { width: 100%; }
 .summary.sfc-stack td:last-child, .summary.sfc-credits td:last-child { width: 180px; }
 .summary.sfc-stack tbody td.left { font-weight: 600; }
