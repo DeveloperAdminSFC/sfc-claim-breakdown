@@ -1290,13 +1290,13 @@ async function loadSample() {
 //                   trade, an ACV credit to apply per trade, upgrades/add-ons (description,
 //                   price, SFC cost — raise the Contracted Amount, never the payout), plus
 //                   client, deductible (typed when the claim doesn't state it) and marketing.
-//   estimate        p1 Trade | Measurement | Insurance Payout (ACV | RCV) | Contracted Amount |
-//                      SFC Cost | Profit Margin (+ Other Job Costs 20%, Job Summary)
-//                   p2 insurance funding (RCV − deductible), ACV credits (pool, applied,
-//                      unapplied) and the price:
-//                      (+) Contracted RCV (+) Upgrades (−) ACV Credits applied (−) Marketing
-//                      = Total Job Price
-//                   p3 SFC scope of work per trade (claim scope, upgrades, credit applied, price)
+//   estimate        p1 Price Snapshot (the whiteboard): Trade | Quantity | Ins. Payout (ACV | RCV) |
+//                      Contracted Amount | SFC Cost | % Profit Margin, then ACV CREDITS,
+//                      MARKETING CREDITS, DEDUCTIBLE and TOTAL rows.
+//                   p2 Homeowner: scope of work (left) and out-of-pocket (right):
+//                      OOP = deductible + upgrades − ACV credits − marketing credits
+//                      Total job value = contracted RCV + upgrades − ACV credits − marketing
+//                      Insurance pays = contracted RCV − deductible;  job value − insurance = OOP
 //
 // Every rate comes from pricing history; only the measurements, credits and client are typed.
 const SFC_TRADE_UOM = { ROOF: "SQ", SIDING: "SF", GUTTERS: "LF", PAINT: "SF", WINDOWS: "EA", FENCE: "LF", GARAGE: "SF", SOLAR: "PNL" };
@@ -1312,7 +1312,7 @@ const SFC_BID_TRADES = new Set(["WINDOWS", "GARAGE", "SOLAR", "PAINT"]);
 let sfc = {
   pricing: null, measurements: {}, bids: {}, unlocked: {}, rateEdits: {}, client: "", perUnit: false,
   groups: [], rates: null, credits: {}, deductible: null, step: 0, itemsRef: null,
-  upgrades: [], applied: {}, marketingCredits: [], completed: {},
+  upgrades: [], marketingCredits: [], completed: {},
 };
 // Marketing credits the homeowner can earn; each one is a typed amount on the measurements screen.
 const SFC_MARKETING_TYPES = ["Yard sign", "Referral", "Review", "Veteran discount"];
@@ -1433,7 +1433,7 @@ async function openSfcEstimate() {
     sfc.itemsRef = state.items;
     sfc.credits = {}; sfc.completed = {}; sfc.measurements = {}; sfc.bids = {}; sfc.unlocked = {}; sfc.rateEdits = {};
     sfc.deductible = null; sfc.client = ""; sfc.groups = [];
-    sfc.upgrades = []; sfc.applied = {}; sfc.marketingCredits = [];
+    sfc.upgrades = []; sfc.marketingCredits = [];
   }
   if (!sfc.client && state.jobInfo && state.jobInfo.contact_name) sfc.client = state.jobInfo.contact_name;
   const md = state.summary || {};
@@ -1572,8 +1572,6 @@ function renderSfcTrade(g, idx, n) {
 // sfc.upgrades: [{ id, trade, description, price, cost }] — an upgrade or add-on the production
 // manager prices on top of the claim (Class 4 shingles, an extra 400 SF of paint…). It raises the
 // trade's Contracted Amount and SFC cost; it never touches the insurance payout breakdown.
-// sfc.applied: trade -> ACV credit dollars moved onto that trade (reduces what the homeowner
-// pays for it). The pool is the ACV of every credited line; what is not applied stays unapplied.
 let sfcUpgradeSeq = 1;
 function sfcUpgradesFor(trade) {
   return sfc.upgrades.filter((u) => u.trade === trade);
@@ -1581,25 +1579,8 @@ function sfcUpgradesFor(trade) {
 function sfcUpgradeTotal(trade, field) {
   return sfcUpgradesFor(trade).reduce((a, u) => a + (Number(u[field]) || 0), 0);
 }
-function sfcAppliedTotal() {
-  return Object.values(sfc.applied).reduce((a, v) => a + (Number(v) || 0), 0);
-}
 function sfcMarketingTotal() {
   return sfc.marketingCredits.reduce((a, m) => a + (Number(m.amount) || 0), 0);
-}
-// The applied credits can never exceed the pool. The pool moves whenever the user goes back
-// and credits or un-credits lines, so clamp on every render: trades keep their amount in
-// order until the pool runs out; whatever no longer fits is trimmed.
-function sfcClampApplied() {
-  let remaining = sfcTotalCredits();
-  for (const g of sfcJobTrades()) {
-    const t = g.trade;
-    let a = Math.max(0, Number(sfc.applied[t]) || 0);
-    if (a > remaining) a = Math.round(remaining * 100) / 100;
-    remaining -= a;
-    if (a > 0) sfc.applied[t] = a;
-    else delete sfc.applied[t];
-  }
 }
 // Every trade that takes part in the job: on the claim with RCV, or carrying an upgrade.
 function sfcJobTrades() {
@@ -1616,7 +1597,6 @@ function sfcJobTrades() {
 // Measurements — one measurement + SFC cost per contracted trade, an ACV credit to apply per
 // trade, upgrades/add-ons, plus client, deductible and marketing credits.
 function renderSfcForm() {
-  sfcClampApplied();
   const groups = sfcJobTrades();
   const pool = sfcTotalCredits();
   const rows = groups
@@ -1627,11 +1607,6 @@ function renderSfcForm() {
       const uom = SFC_TRADE_UOM[g.trade];
       const rate = sfcRateFor(g.trade);
       const meas = sfc.measurements[g.trade];
-      const applied = sfc.applied[g.trade];
-      const creditCell = `<td class="num credit"><span class="sfc-field">
-          <input class="input sfc-apply" type="number" min="0" step="0.01" inputmode="decimal"
-                 data-trade="${esc(g.trade)}" value="${applied ? esc(applied) : ""}" placeholder="$0" ${pool > 0 ? "" : "disabled"} />
-        </span></td>`;
       const note =
         sfcStatusBadge(c) +
         (c.credited ? `<span class="sfc-credited-note">${c.credited} line${c.credited === 1 ? "" : "s"} credited</span>` : "") +
@@ -1646,7 +1621,6 @@ function renderSfcForm() {
         <td class="num rcv">${fmtUSD(contracted)}</td>
         <td class="num meas"></td>
         <td class="cost"><span class="sfc-rate"><em>${ups.length ? "upgrades only" : "credited"}</em></span></td>
-        ${creditCell}
       </tr>`;
       }
       if (sfcIsClaimOnly(g.trade)) {
@@ -1656,7 +1630,6 @@ function renderSfcForm() {
         <td class="num rcv">${fmtUSD(contracted)}</td>
         <td class="num meas"></td>
         <td class="cost"><span class="sfc-rate"><em>claim only</em></span></td>
-        ${creditCell}
       </tr>`;
       }
       const bid = sfcIsBid(g.trade);
@@ -1685,7 +1658,6 @@ function renderSfcForm() {
           <span class="uom">${esc(uom)}</span>
         </span></td>
         <td class="cost">${rateHTML}</td>
-        ${creditCell}
       </tr>`;
     })
     .join("");
@@ -1714,12 +1686,11 @@ function renderSfcForm() {
       </tr>`)
     .join("");
 
-  const applied = sfcAppliedTotal();
   document.getElementById("sfcBody").innerHTML = `
     <div class="sfc-tradenav">
       <button type="button" class="btn btn-nav" id="sfcPrevBtn" aria-label="Back to the last trade">←</button>
       <div class="sfc-tradenav-title"><span class="sfc-step">Measurements &amp; pricing</span><span class="trade-cell">All trades</span></div>
-      <div class="sfc-tradenav-credits">ACV credits <b>${fmtUSD(pool)}</b><span class="sfc-pool" id="sfcPool">applied ${fmtUSD(applied)} · unapplied ${fmtUSD(pool - applied)}</span></div>
+      <div class="sfc-tradenav-credits">ACV credits <b>${fmtUSD(pool)}</b></div>
       <span></span>
     </div>
     <div class="sfc-controls">
@@ -1727,8 +1698,8 @@ function renderSfcForm() {
       <label>Deductible <span class="sfc-field"><input id="sfcDeductible" class="input" type="number" min="0" step="0.01" inputmode="decimal"
              value="${sfc.deductible != null ? esc(sfc.deductible) : ""}" placeholder="$" title="From the claim when stated; type it when the appraisal leaves it off" /></span></label>
     </div>
-    <table class="sfc-form sfc-form-5">
-      <thead><tr><th class="trade">Trade</th><th class="num rcv">Contracted</th><th class="num meas">Measurement</th><th class="cost">SFC cost</th><th class="num credit">Apply ACV credit</th></tr></thead>
+    <table class="sfc-form">
+      <thead><tr><th class="trade">Trade</th><th class="num rcv">Contracted</th><th class="num meas">Measurement</th><th class="cost">SFC cost</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
     <p class="section-label sfc-upgrades-label">Upgrades &amp; add-ons <span class="sfc-muted">priced on top of the claim — raise the Contracted Amount, not the insurance payout</span></p>
@@ -1751,7 +1722,6 @@ function renderSfcForm() {
     for (const inp of document.querySelectorAll(".sfc-meas")) { const v = Number(inp.value); sfc.measurements[inp.dataset.trade] = v > 0 ? v : null; }
     for (const inp of document.querySelectorAll(".sfc-bid")) { const v = Number(inp.value); sfc.bids[inp.dataset.trade] = v > 0 ? v : null; }
     for (const inp of document.querySelectorAll(".sfc-rate-in")) { const v = Number(inp.value); sfc.rateEdits[inp.dataset.trade] = v > 0 ? v : null; }
-    for (const inp of document.querySelectorAll(".sfc-apply")) { const v = Number(inp.value); if (v > 0) sfc.applied[inp.dataset.trade] = v; else delete sfc.applied[inp.dataset.trade]; }
     for (const u of sfc.upgrades) {
       const q = (cls) => document.querySelector(`.${cls}[data-id="${u.id}"]`);
       if (q("sfc-up-trade")) u.trade = q("sfc-up-trade").value;
@@ -1774,19 +1744,6 @@ function renderSfcForm() {
   }
   for (const btn of document.querySelectorAll(".sfc-lock")) {
     btn.addEventListener("click", () => { snapshotInputs(); sfc.unlocked[btn.dataset.trade] = false; sfc.rateEdits[btn.dataset.trade] = null; renderSfcForm(); });
-  }
-  // Applied credits: keep the pool line live, and never let the applied total exceed the pool.
-  for (const inp of document.querySelectorAll(".sfc-apply")) {
-    inp.addEventListener("input", () => {
-      let total = 0;
-      for (const o of document.querySelectorAll(".sfc-apply")) total += Math.max(0, Number(o.value) || 0);
-      if (total > pool + 0.005) {
-        const over = total - pool;
-        inp.value = String(Math.max(0, Math.round((Number(inp.value) - over) * 100) / 100));
-        total = pool;
-      }
-      document.getElementById("sfcPool").textContent = `applied ${fmtUSD(total)} · unapplied ${fmtUSD(pool - total)}`;
-    });
   }
   document.getElementById("sfcAddUpgrade").addEventListener("click", () => {
     snapshotInputs();
@@ -1820,9 +1777,22 @@ function renderSfcForm() {
   });
 }
 
-// The estimate: page 1 trades, page 2 insurance funding + job price, page 3 SFC scope.
+// Homeowner-facing names for the trades on the scope of work.
+const SFC_TRADE_SERVICE = {
+  ROOF: "Roofing Services", GUTTERS: "Gutter Services", SIDING: "Siding Services", WINDOWS: "Window Services",
+  PAINT: "Painting Services", SOLAR: "Solar Services", FENCE: "Fence Services", GARAGE: "Garage Services",
+  MISC: "Miscellaneous", "PERSONAL PROPERTY": "Personal Property",
+};
+const sfcServiceName = (t) =>
+  SFC_TRADE_SERVICE[t] || `${String(t).toLowerCase().replace(/\b\w/g, (ch) => ch.toUpperCase())} Services`;
+
+// The estimate, two pages:
+//   p1  Price Snapshot for the production manager — the whiteboard, one table:
+//       Trade | Quantity | Ins. Payout (ACV | RCV) | Contracted Amount | SFC Cost | % Profit Margin
+//       + ACV CREDITS, MARKETING CREDITS, DEDUCTIBLE and TOTAL rows.
+//   p2  Homeowner — Scope of work (left) and the out-of-pocket box (right); both land on the
+//       same out-of-pocket number by construction.
 function renderSfcEstimate() {
-  sfcClampApplied();
   const allGroups = sfcJobTrades();
   sfc.groups = allGroups;
   const md = state.summary || {};
@@ -1834,6 +1804,7 @@ function renderSfcEstimate() {
   const per = sfc.perUnit;
   const money0 = (n) => (n == null ? "—" : Number(n).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }));
   const pctCls = (pct) => (pct == null ? "" : pct >= SFC_TARGET_MARGIN ? "pos" : "neg");
+  const paren = (n) => (n > 0 ? `(${fmtUSD(n)})` : fmtUSD(0));
 
   // Trades — contracted scope (credited lines are out of the job) plus upgrades.
   const rows = allGroups
@@ -1845,11 +1816,9 @@ function renderSfcEstimate() {
       const upPrice = ups.reduce((a, u) => a + (Number(u.price) || 0), 0);
       const upCost = ups.reduce((a, u) => a + (Number(u.cost) || 0), 0);
       const contracted = rcv + upPrice;
-      const applied = Number(sfc.applied[g.trade]) || 0;
       const uom = SFC_TRADE_UOM[g.trade];
-      const base = { g, c, rcv, acv, ups, upPrice, upCost, contracted, applied, uom, rate: null, meas: null, bid: null };
+      const base = { g, c, rcv, acv, ups, upPrice, upCost, contracted, uom, meas: null };
       if (sfcIsClaimOnly(g.trade) || rcv <= 0) {
-        // No trade-level SFC cost from history — only what the upgrades carry.
         const priced = ups.length > 0 && upCost > 0;
         const cost = priced ? upCost : null;
         const pct = priced && contracted > 0 ? ((contracted - cost) / contracted) * 100 : null;
@@ -1862,209 +1831,117 @@ function renderSfcEstimate() {
       const priced = bid != null ? bid > 0 : perUnitRate != null && meas != null && meas > 0;
       const cost = !priced ? null : (bid != null ? bid : perUnitRate * meas) + upCost;
       const pct = priced && contracted > 0 ? ((contracted - cost) / contracted) * 100 : null;
-      return { ...base, rate, meas, bid, priced, cost, pct };
+      return { ...base, meas, priced, cost, pct };
     });
-  const priced = rows.filter((r) => r.priced);
   const payout = rows.reduce((a, r) => a + r.rcv, 0);          // insurance pays (contracted RCV)
   const payoutACV = rows.reduce((a, r) => a + r.acv, 0);       // first check for that scope
   const upgrades = rows.reduce((a, r) => a + r.upPrice, 0);
   const contractedTotal = payout + upgrades;
-  const tradeCost = priced.reduce((a, r) => a + r.cost, 0);
-
-  // Other job costs: always 20% of the contracted amount. Roof squares only feed the
-  // per-unit view of the job-wide rows.
-  const roofRow = rows.find((x) => x.g.trade === "ROOF" && x.meas > 0);
-  const roofSq = roofRow ? roofRow.meas : 0;
+  const tradeCost = rows.filter((r) => r.priced).reduce((a, r) => a + r.cost, 0);
+  const grossPct = contractedTotal > 0 ? ((contractedTotal - tradeCost) / contractedTotal) * 100 : null;
+  // Other job costs (20% of contracted) sit under the table, not inside the whiteboard math.
   const other = contractedTotal * (SFC_OTHER_PCT / 100);
+  const netPct = contractedTotal > 0 ? ((contractedTotal - tradeCost - other) / contractedTotal) * 100 : null;
 
-  // Gross profit at the contracted amount (overhead is not charged to the job)
-  const totalCost = tradeCost + other;
-  const net = contractedTotal - totalCost;
-  const netPct = contractedTotal > 0 ? (net / contractedTotal) * 100 : null;
-
-  // Money: ACV credits pool, what was applied to trades, deductible, marketing, job price.
+  // Money: ACV credits, marketing credits, deductible, job value, who pays what.
   const acvCredits = sfcTotalCredits();
-  const applied = sfcAppliedTotal();
-  const unapplied = acvCredits - applied;
-  const deductible = sfc.deductible != null ? Number(sfc.deductible) || 0 : 0;
-  const marketing = sfcMarketingTotal();
-  const jobPrice = contractedTotal - applied - marketing;
   const creditedLines = sfcCreditedLines();
-  // Production status: contracted RCV already produced vs still to do.
+  const marketing = sfcMarketingTotal();
+  const deductible = sfc.deductible != null ? Number(sfc.deductible) || 0 : 0;
+  const jobValue = contractedTotal - acvCredits - marketing;
+  const insurancePays = payout - deductible;
+  const outOfPocket = deductible + upgrades - acvCredits - marketing; // === jobValue − insurancePays
+  const netCredit = acvCredits + marketing - deductible;               // whiteboard TOTAL: credits − deductible
   const doneRCV = rows.reduce((a, r) => a + r.c.done, 0);
-  const anyDone = doneRCV > 0;
 
-  // Per-unit view: every dollar figure carries its unit. Job-wide rows are per roof SQ.
+  // Per-unit view: money cells carry their unit (trade rows only).
   const unit = (n, meas, uom) => (meas > 0 ? `${fmtRate(n / meas)}<span class="per">/${esc(uom)}</span>` : "—");
-  const cell = (n, meas, uom) => (per ? unit(n, meas, uom) : money0(n));
-  const span = 2; // Trade + Measurement
+  const cell = (n, x) => (per && x.uom && x.meas > 0 ? unit(n, x.meas, x.uom) : money0(n));
 
-  // Columns: Trade | Measurement | Insurance Payout (ACV | RCV) | Contracted Amount | SFC Cost |
-  // Profit Margin. Insurance payout is the trade's contracted lines (credited lines sit on
-  // page 2). Contracted Amount = contracted RCV + upgrades, each upgrade shown as a sub-row.
+  // ---- p1: the snapshot table ----
   const tradeRows = rows
-    .map((x) => {
-      const m = x.uom && x.meas > 0 ? x.meas : 0;
-      const main = `
-      <tr>
-        <td class="left">${esc(x.g.trade)}${sfcStatusBadge(x.c)}</td>
-        <td class="center">${x.meas != null && x.uom ? `${esc(x.meas)} ${esc(x.uom)}` : ""}</td>
-        <td class="sub">${x.rcv > 0 ? cell(x.acv, m, x.uom) : "—"}</td>
-        <td class="sub">${x.rcv > 0 ? cell(x.rcv, m, x.uom) : "—"}</td>
-        <td>${cell(x.contracted, m, x.uom)}</td>
-        <td>${x.priced ? cell(x.cost, m, x.uom) : "—"}</td>
-        <td class="${pctCls(x.pct)}">${x.priced ? fmtPct1(x.pct) : "—"}</td>
-      </tr>`;
-      const subs = x.ups
-        .map((u) => `
-      <tr class="sfc-up-row">
-        <td class="left up" colspan="4">↳ ${esc(u.description || "Upgrade")}</td>
-        <td>+${money0(u.price)}</td>
-        <td>${u.cost > 0 ? `+${money0(u.cost)}` : ""}</td>
-        <td></td>
-      </tr>`)
-        .join("");
-      return main + subs;
-    })
-    .join("");
-
-  // Dollar view: just the amount (in the SFC Cost column). Per-UOM view: the share of the
-  // contracted amount it represents.
-  const sqRow = (label, amount, pct) => `
-      <tr>
-        <td class="left">${esc(label)}</td>
-        <td></td>
-        <td class="sub"></td>
-        <td class="sub"></td>
-        <td></td>
-        <td>${per ? `${esc(pct)}%` : money0(amount)}</td>
-        <td></td>
-      </tr>`;
-
-  // Full-job row: payout ACV | payout RCV | contracted | cost | margin.
-  const jobRow = (label, cls, acv, revenue, contracted, cost, marginPct, marginCls) => `
-      <tr class="${cls}">
-        <td class="left" colspan="${span}">${esc(label)}</td>
-        <td class="sub">${cell(acv, roofSq, "SQ")}</td>
-        <td class="sub">${cell(revenue, roofSq, "SQ")}</td>
-        <td>${cell(contracted, roofSq, "SQ")}</td>
-        <td>${cell(cost, roofSq, "SQ")}</td>
-        <td class="${marginCls}">${fmtPct1(marginPct)}</td>
-      </tr>`;
-
-  const creditRows = creditedLines
-    .map((it) => `
-      <tr>
-        <td class="left">${esc(it.trade || "Not Categorized")}</td>
-        <td class="left desc">${esc(it.displayNumber)} · ${esc(it.description)}</td>
-        <td>${fmtUSD(sfcLineACV(it))}</td>
-      </tr>`)
-    .join("");
-  const appliedRows = rows
-    .filter((x) => x.applied > 0)
     .map((x) => `
       <tr>
-        <td class="left" colspan="2">Applied to ${esc(x.g.trade)}</td>
-        <td>(${fmtUSD(x.applied)})</td>
+        <td class="left trade">${esc(x.g.trade)}${sfcStatusBadge(x.c)}${x.ups.length ? `<div class="snap-sub">– upgrades: ${esc(x.ups.map((u) => u.description || "upgrade").join(", "))}</div>` : ""}</td>
+        <td class="center">${x.meas != null && x.uom ? `${esc(x.meas)} ${esc(x.uom)}` : ""}</td>
+        <td class="sub">${x.rcv > 0 ? cell(x.acv, x) : "—"}</td>
+        <td class="sub">${x.rcv > 0 ? cell(x.rcv, x) : "—"}${x.upPrice > 0 ? `<div class="snap-up">+${money0(x.upPrice)}</div>` : ""}</td>
+        <td>${cell(x.contracted, x)}</td>
+        <td>${x.priced ? cell(x.cost, x) : "—"}</td>
+        <td class="${pctCls(x.pct)}">${x.priced ? fmtPct1(x.pct) : "—"}</td>
       </tr>`)
     .join("");
+  const creditNames = (() => {
+    const names = creditedLines.map((it) => it.description);
+    const shown = names.slice(0, 6);
+    return shown.length ? esc(shown.join(", ")) + (names.length > shown.length ? ` +${names.length - shown.length} more` : "") : "none";
+  })();
+  const moneyRows = `
+      <tr class="snap-money">
+        <td class="left trade">ACV CREDITS<div class="snap-sub">${creditNames}</div></td>
+        <td></td>
+        <td class="sub">${acvCredits > 0 ? fmtUSD(acvCredits) : "—"}</td>
+        <td class="sub"></td>
+        <td class="pos">${acvCredits > 0 ? `+${fmtUSD(acvCredits)}` : "—"}</td>
+        <td></td><td></td>
+      </tr>
+      ${marketing > 0 ? `
+      <tr class="snap-money">
+        <td class="left trade">MARKETING CREDITS<div class="snap-sub">${esc(sfc.marketingCredits.map((m) => m.type).join(", "))}</div></td>
+        <td></td><td class="sub"></td><td class="sub"></td>
+        <td class="pos">+${fmtUSD(marketing)}</td>
+        <td></td><td></td>
+      </tr>` : ""}
+      <tr class="snap-money">
+        <td class="left trade">DEDUCTIBLE${sfc.deductible == null ? `<div class="snap-sub">not stated on the claim — enter it on the measurements screen</div>` : ""}</td>
+        <td></td><td class="sub"></td><td class="sub"></td>
+        <td class="neg">${deductible > 0 ? `(${fmtUSD(deductible)})` : "—"}</td>
+        <td></td><td></td>
+      </tr>`;
+  const totalRows = `
+      <tr class="snap-net">
+        <td class="left trade">TOTAL<div class="snap-sub">credits − deductible</div></td>
+        <td></td><td class="sub"></td><td class="sub"></td>
+        <td class="${netCredit >= 0 ? "pos" : "neg"}">${netCredit >= 0 ? fmtUSD(netCredit) : `(${fmtUSD(-netCredit)})`}</td>
+        <td></td><td></td>
+      </tr>
+      <tr class="sfc-net">
+        <td class="left trade"></td>
+        <td></td>
+        <td class="sub">${money0(payoutACV)}</td>
+        <td class="sub">${money0(payout)}${upgrades > 0 ? `<div class="snap-up">+${money0(upgrades)}</div>` : ""}</td>
+        <td>${money0(contractedTotal)}</td>
+        <td>${money0(tradeCost)}</td>
+        <td class="${pctCls(grossPct)}">${fmtPct1(grossPct)}</td>
+      </tr>`;
 
-  // Page 3 — homeowner-facing scope: per trade, what we are doing and what it costs.
-  const scopeBlocks = rows
-    .map((x) => {
-      const lines = [];
-      if (x.rcv > 0) {
-        lines.push(`<li>${esc(x.g.trade)} per the insurance claim${x.meas != null && x.uom ? ` — ${esc(x.meas)} ${esc(x.uom)}` : ""}<span class="scope-amt">${fmtUSD(x.rcv)}</span></li>`);
-      }
-      for (const u of x.ups) lines.push(`<li>${esc(u.description || "Upgrade")}<span class="scope-amt">+${fmtUSD(u.price)}</span></li>`);
-      if (x.applied > 0) lines.push(`<li class="credit">Insurance ACV credit applied<span class="scope-amt">(${fmtUSD(x.applied)})</span></li>`);
-      const price = x.contracted - x.applied;
-      return `
-      <div class="sfc-scope">
-        <div class="sfc-scope-head"><span class="trade-cell"><span class="trade-swatch" style="background:${x.g.color}"></span>${esc(x.g.trade)}${sfcStatusBadge(x.c)}</span><span class="sfc-scope-price">${fmtUSD(price)}</span></div>
-        <ul class="sfc-scope-lines">${lines.join("")}</ul>
-      </div>`;
-    })
+  // ---- p2: homeowner scope (left) + out-of-pocket (right) ----
+  const scopeRows = rows
+    .map((x) => `
+      <li class="scope-trade"><span>${esc(sfcServiceName(x.g.trade))}${sfcStatus(x.c) === "complete" ? ' <span class="sfc-badge complete">Completed</span>' : ""}</span><span class="scope-amt">${x.rcv > 0 ? fmtUSD(x.rcv) : "—"}</span></li>
+      ${x.ups.map((u) => `<li class="scope-up"><span>• ${esc(u.description || "Upgrade")}</span><span class="scope-amt">+${fmtUSD(u.price)}</span></li>`).join("")}`)
     .join("");
-
-  // Who pays what: insurance pays the contracted RCV less the deductible; the homeowner pays
-  // the deductible plus upgrades, less any ACV credit applied and the marketing credit.
-  // insurancePays + outOfPocket === jobPrice by construction.
-  const insurancePays = payout - deductible;
-  const outOfPocket = deductible + upgrades - applied - marketing;
-  const paren = (n) => (n > 0 ? `(${fmtUSD(n)})` : fmtUSD(0));
-
-  const head = (eyebrow) => `
-      <div class="doc-head">
-        <p class="doc-eyebrow">${eyebrow}</p>
-        <h1 class="doc-title sfc-title">${esc(client !== "—" ? client : "SFC Estimate")}</h1>
-        <p class="doc-sub">${esc(md.insurance_company || "")}${md.insurance_company ? " · " : ""}Claim report ${esc(crDate)}</p>
-      </div>`;
 
   document.getElementById("sfcBody").innerHTML = `
     <section class="page">
-      ${head("SFC Estimate · Production")}
-      <table class="summary sfc-est sfc-payout">
+      <div class="doc-head">
+        <p class="doc-eyebrow">SFC Estimate · Price Snapshot</p>
+        <h1 class="doc-title sfc-title">${esc(client !== "—" ? client : "SFC Estimate")}</h1>
+        <p class="doc-sub">${esc(md.insurance_company || "")}${md.insurance_company ? " · " : ""}Claim report ${esc(crDate)}</p>
+      </div>
+      <table class="summary sfc-est sfc-payout snap">
         <thead>
           <tr>
-            <th class="left" rowspan="2">Trade</th><th class="center" rowspan="2">Measurement</th>
-            <th class="group" colspan="2">Insurance Payout Breakdown</th>
-            <th rowspan="2">Contracted Amount</th><th rowspan="2">SFC Cost</th><th rowspan="2">Profit Margin</th>
+            <th class="left" rowspan="2">Trade</th><th class="center" rowspan="2">Quantity</th>
+            <th class="group" colspan="2">Ins. Payout Breakdown</th>
+            <th rowspan="2">Contracted Amount</th><th rowspan="2">SFC Cost</th><th rowspan="2">% Profit Margin</th>
           </tr>
           <tr><th class="sub">ACV</th><th class="sub">RCV</th></tr>
         </thead>
-        <tbody>
-          ${tradeRows}
-          ${sqRow("Other Job Costs", other, SFC_OTHER_PCT)}
-        </tbody>
-        <tfoot>
-          ${jobRow("Job Summary", "sfc-net", payoutACV, payout, contractedTotal, totalCost, netPct, pctCls(netPct))}
-        </tfoot>
+        <tbody>${tradeRows}${moneyRows}</tbody>
+        <tfoot>${totalRows}</tfoot>
       </table>
-      ${anyDone ? `
-      <p class="section-label sfc-stack-label">Production status</p>
-      <table class="summary sfc-est sfc-stack">
-        <tbody>
-          <tr><td class="left">Work already completed <span class="sfc-muted">${rows.filter((x) => sfcStatus(x.c) === "complete").map((x) => x.g.trade).join(", ") || "part of a trade"}</span></td><td>${fmtUSD(doneRCV)}</td></tr>
-          <tr><td class="left">Remaining contracted work</td><td>${fmtUSD(payout - doneRCV)}</td></tr>
-        </tbody>
-      </table>` : ""}
-    </section>
-
-    <section class="page">
-      ${head("SFC Estimate · Money")}
-
-      <p class="section-label sfc-stack-label">Job price — who pays what</p>
-      <table class="summary sfc-est sfc-stack">
-        <tbody>
-          <tr><td class="left">Contracted RCV <span class="sfc-muted">insurance pays for our scope</span></td><td>${fmtUSD(payout)}</td></tr>
-          <tr><td class="left sub-l">First check (ACV)</td><td class="sub">${fmtUSD(payoutACV)}</td></tr>
-          <tr><td class="left sub-l">Recoverable on completion</td><td class="sub">${fmtUSD(payout - payoutACV)}</td></tr>
-          <tr><td class="left">(+) Upgrades &amp; add-ons${rows.some((x) => x.ups.length) ? ` <span class="sfc-muted">${rows.reduce((a, x) => a + x.ups.length, 0)} item${rows.reduce((a, x) => a + x.ups.length, 0) === 1 ? "" : "s"}</span>` : ""}</td><td>${fmtUSD(upgrades)}</td></tr>
-          <tr><td class="left">(−) ACV credits applied</td><td>${paren(applied)}</td></tr>
-          <tr><td class="left">(−) Marketing credits${sfc.marketingCredits.length ? ` <span class="sfc-muted">${esc(sfc.marketingCredits.map((m) => m.type).join(", "))}</span>` : ""}</td><td>${paren(marketing)}</td></tr>
-        </tbody>
-        <tfoot>
-          <tr class="sfc-net"><td class="left">Total job price</td><td>${fmtUSD(jobPrice)}</td></tr>
-          <tr><td class="left sub-l">Paid by insurance</td><td class="sub">${fmtUSD(insurancePays)}</td></tr>
-          <tr><td class="left sub-l">Paid by the homeowner</td><td class="sub">${fmtUSD(outOfPocket)}</td></tr>
-        </tfoot>
-      </table>
-      ${sfc.deductible == null ? `<p class="sfc-rates">Deductible not stated on the claim — enter it on the measurements screen.</p>` : ""}
-    </section>
-
-    <section class="page">
-      ${head("SFC Estimate · ACV Credits")}
-      <p class="section-label sfc-stack-label">ACV credits — lines the homeowner is not contracting</p>
-      <table class="summary sfc-est sfc-credits">
-        <thead><tr><th class="left">Trade</th><th class="left">Line</th><th>ACV</th></tr></thead>
-        <tbody>${creditRows || `<tr><td class="left" colspan="3"><span class="sfc-muted">No lines credited.</span></td></tr>`}</tbody>
-        <tfoot>
-          <tr><td class="left" colspan="2">Total ACV credits</td><td>${fmtUSD(acvCredits)}</td></tr>
-          ${appliedRows}
-          <tr class="sfc-net"><td class="left" colspan="2">Unapplied <span class="sfc-muted">stays with the homeowner</span></td><td>${fmtUSD(unapplied)}</td></tr>
-        </tfoot>
-      </table>
+      <p class="sfc-rates">Margins are gross of other job costs. Other job costs at ${SFC_OTHER_PCT}% of contracted = <b>${fmtUSD(other)}</b> → job margin after other costs <b>${fmtPct1(netPct)}</b>.${doneRCV > 0 ? ` Work already completed: <b>${fmtUSD(doneRCV)}</b> of ${fmtUSD(payout)} contracted RCV.` : ""}</p>
     </section>
 
     <section class="page sfc-homeowner">
@@ -2073,39 +1950,33 @@ function renderSfcEstimate() {
         <h1 class="doc-title sfc-title">${esc(client !== "—" ? client : "Preliminary Pricing")}</h1>
         <p class="doc-sub">${esc(md.insurance_company || "")}${md.insurance_company ? " · " : ""}Claim report ${esc(crDate)} · Prepared ${new Date().toLocaleDateString("en-US")}</p>
       </div>
-
-      <p class="section-label sfc-stack-label">Scope of work</p>
-      ${scopeBlocks || `<p class="sfc-note">Nothing contracted.</p>`}
-      <div class="sfc-scope sfc-scope-total">
-        <div class="sfc-scope-head"><span>Total job price</span><span class="sfc-scope-price">${fmtUSD(jobPrice)}</span></div>
-      </div>
-
-      <div class="ho-grid">
+      <div class="ho-grid ho-grid-wide">
         <div>
-          <p class="section-label sfc-stack-label">Your insurance claim</p>
-          <table class="summary sfc-est sfc-stack ho-table">
-            <tbody>
-              <tr><td class="left">Claim RCV for this work</td><td>${fmtUSD(payout)}</td></tr>
-              <tr><td class="left">(−) Your deductible</td><td>${paren(deductible)}</td></tr>
-            </tbody>
-            <tfoot><tr class="sfc-net"><td class="left">Insurance pays you</td><td>${fmtUSD(insurancePays)}</td></tr></tfoot>
-          </table>
-          <p class="ho-note">Insurance sends ${fmtUSD(payoutACV)} now and the remaining ${fmtUSD(payout - payoutACV)} (recoverable depreciation) once the work is complete.</p>
+          <p class="section-label sfc-stack-label">Scope of work</p>
+          <ul class="scope-list">
+            ${scopeRows || `<li class="scope-trade"><span>Nothing contracted</span><span class="scope-amt">—</span></li>`}
+            <li class="scope-adj"><span>(−) ACV credits</span><span class="scope-amt">${paren(acvCredits)}</span></li>
+            <li class="scope-adj"><span>(−) Marketing credits</span><span class="scope-amt">${paren(marketing)}</span></li>
+            <li class="scope-adj"><span>(+) Upgrades</span><span class="scope-amt">${fmtUSD(upgrades)}</span></li>
+            <li class="scope-total"><span>Total job value</span><span class="scope-amt">${fmtUSD(jobValue)}</span></li>
+            <li class="scope-ins"><span>Insurance is paying you</span><span class="scope-amt">${fmtUSD(insurancePays)}</span></li>
+            <li class="scope-oop"><span>Your out-of-pocket</span><span class="scope-amt">${fmtUSD(outOfPocket)}</span></li>
+          </ul>
         </div>
         <div>
           <p class="section-label sfc-stack-label">Your out-of-pocket</p>
           <table class="summary sfc-est sfc-stack ho-table">
             <tbody>
-              <tr><td class="left">Deductible</td><td>${fmtUSD(deductible)}</td></tr>
-              <tr><td class="left">(+) Upgrades &amp; add-ons</td><td>${fmtUSD(upgrades)}</td></tr>
-              <tr><td class="left">(−) Insurance ACV credits applied</td><td>${paren(applied)}</td></tr>
+              <tr><td class="left">(+) Deductible</td><td>${fmtUSD(deductible)}</td></tr>
+              <tr><td class="left">(+) Upgrades</td><td>${fmtUSD(upgrades)}</td></tr>
+              <tr><td class="left">(−) ACV credits</td><td>${paren(acvCredits)}</td></tr>
               ${sfc.marketingCredits.length
                 ? sfc.marketingCredits.map((m) => `<tr><td class="left">(−) ${esc(m.type)} credit</td><td>${paren(Number(m.amount) || 0)}</td></tr>`).join("")
                 : `<tr><td class="left">(−) Marketing credits</td><td>${fmtUSD(0)}</td></tr>`}
             </tbody>
-            <tfoot><tr class="sfc-net"><td class="left">Your out-of-pocket cost</td><td>${fmtUSD(outOfPocket)}</td></tr></tfoot>
+            <tfoot><tr class="sfc-net"><td class="left">Out-of-pocket cost</td><td>${fmtUSD(outOfPocket)}</td></tr></tfoot>
           </table>
-          <p class="ho-note">Insurance ${fmtUSD(insurancePays)} + you ${fmtUSD(outOfPocket)} = total job price ${fmtUSD(jobPrice)}.</p>
+          <p class="ho-note">Insurance pays ${fmtUSD(payout)} for this work less your ${fmtUSD(deductible)} deductible: ${fmtUSD(payoutACV)} now and ${fmtUSD(payout - payoutACV)} (recoverable depreciation) once the work is complete.</p>
         </div>
       </div>
       <p class="ho-fine">This is a preliminary estimate, not a binding contract. Final pricing may change with conditions found during the project or changes in scope.</p>

@@ -529,6 +529,25 @@ body {
 .sfc-badge.complete { background: #e3ecfa; color: var(--accent); }
 .sfc-badge.partial { background: #fff4e0; color: #9a5b00; }
 .sfc-form .sfc-badge { display: inline-block; margin: 0 0 2px 8px; }
+/* ---- Price Snapshot (whiteboard) ---- */
+.snap td.trade { font-weight: 800; }
+.snap .snap-sub { display: block; font-size: 11px; font-weight: 500; color: var(--ink-soft); margin-top: 2px; white-space: normal; max-width: 260px; }
+.snap .snap-up { font-size: 12px; font-weight: 700; color: var(--neg); margin-top: 2px; }
+.snap tr.snap-money td { border-top: 2px solid var(--rule-strong); }
+.snap tr.snap-money + tr.snap-money td { border-top: 1px solid var(--rule); }
+.snap tfoot tr.snap-net td { border-top: 2px solid #000; font-size: 15px; padding-top: 12px; }
+.snap tfoot tr.sfc-net td { border-top: 0; padding-top: 4px; }
+/* ---- Homeowner page: scope list ---- */
+.ho-grid-wide { grid-template-columns: 1.25fr 1fr; }
+.scope-list { list-style: none; margin: 0; padding: 0; font-size: 14px; }
+.scope-list li { display: flex; justify-content: space-between; gap: 16px; padding: 7px 0; border-bottom: 1px solid var(--rule); }
+.scope-list li .scope-amt { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.scope-list li.scope-trade { font-weight: 700; color: #000; }
+.scope-list li.scope-up { padding-left: 18px; color: var(--ink-soft); border-bottom: 1px dashed var(--rule); }
+.scope-list li.scope-adj { color: var(--ink); }
+.scope-list li.scope-total { border-top: 2px solid #000; border-bottom: 0; margin-top: 4px; padding-top: 12px; font-weight: 800; color: #000; font-size: 16px; }
+.scope-list li.scope-ins { border-bottom: 0; color: var(--ink-soft); }
+.scope-list li.scope-oop { border-top: 1px solid var(--rule-strong); border-bottom: 0; font-weight: 800; color: #000; font-size: 16px; }
 /* ---- Job price stack on the estimate ---- */
 .sfc-stack-label { margin-top: 6px; }
 .summary.sfc-payout + .sfc-stack-label { margin-top: 34px; }
