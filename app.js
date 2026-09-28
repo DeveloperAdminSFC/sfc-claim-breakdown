@@ -1874,6 +1874,14 @@ function renderSfcEstimate() {
         <td class="${pctCls(x.pct)}">${x.priced ? fmtPct1(x.pct) : "—"}</td>
       </tr>`)
     .join("");
+  const otherRow = `
+      <tr>
+        <td class="left trade">OTHER JOB COSTS<div class="snap-sub">${SFC_OTHER_PCT}% of contracted</div></td>
+        <td></td><td class="sub"></td><td class="sub"></td>
+        <td></td>
+        <td>${money0(other)}</td>
+        <td></td>
+      </tr>`;
   const moneyRows = `
       <tr class="snap-money">
         <td class="left trade">ACV CREDITS</td>
@@ -1890,13 +1898,7 @@ function renderSfcEstimate() {
         <td class="neg">(${fmtUSD(marketing)})</td>
         <td></td><td></td>
       </tr>` : ""}
-      <tr class="snap-money">
-        <td class="left trade">OTHER JOB COSTS<div class="snap-sub">${SFC_OTHER_PCT}% of contracted</div></td>
-        <td></td><td class="sub"></td><td class="sub"></td>
-        <td></td>
-        <td>${money0(other)}</td>
-        <td></td>
-      </tr>`;
+`;
   const totalRows = `
       <tr class="sfc-net">
         <td class="left trade">TOTAL${upgrades > 0 ? `<div class="snap-sub">Incl. Upgrades <span class="snap-up">+${money0(upgrades)}</span></div>` : ""}</td>
@@ -1918,6 +1920,7 @@ function renderSfcEstimate() {
   // Every trade on the claim (credited ones too — shown struck, never added).
   const insRows = allGroups.filter((g) => g.items.length).map((g) => ({ g, c: sfcContracted(g) }));
   const recTotal = insRows.reduce((a, t) => a + t.c.rec, 0);
+  const claimACV = insRows.reduce((a, t) => a + t.c.acv + t.c.credit, 0); // every line — insurance pays ACV regardless
 
   // ---- p2: homeowner scope (left) + out-of-pocket (right) ----
   const scopeRows = rows
@@ -1942,7 +1945,7 @@ function renderSfcEstimate() {
           </tr>
           <tr><th class="sub">ACV</th><th class="sub">RCV</th></tr>
         </thead>
-        <tbody>${tradeRows}${moneyRows}</tbody>
+        <tbody>${tradeRows}${otherRow}${moneyRows}</tbody>
         <tfoot>${totalRows}</tfoot>
       </table>
     </section>
@@ -2005,13 +2008,13 @@ function renderSfcEstimate() {
       <table class="summary sfc-est sfc-stack ins-table">
         <thead><tr><th class="left">Trade</th><th>ACV</th></tr></thead>
         <tbody>${insRows.map((t) => `
-          <tr class="${t.c.rcv <= 0 ? "struck" : ""}">
-            <td class="left">${esc(sfcServiceName(t.g.trade))}${t.c.rcv <= 0 ? ' <span class="sfc-muted">not contracted</span>' : t.c.credited ? ` <span class="sfc-muted">${t.c.credited} item${t.c.credited === 1 ? "" : "s"} credited: <s>${fmtUSD(t.c.credit)}</s></span>` : ""}</td>
-            <td>${t.c.rcv <= 0 ? `<s>${fmtUSD(t.c.credit)}</s>` : fmtUSD(t.c.acv)}</td>
+          <tr>
+            <td class="left">${esc(sfcServiceName(t.g.trade))}</td>
+            <td>${fmtUSD(t.c.acv + t.c.credit)}</td>
           </tr>`).join("")}
           <tr><td class="left">(−) Your deductible</td><td>${paren(deductible)}</td></tr>
         </tbody>
-        <tfoot><tr class="sfc-net"><td class="left">Insurance pays you now</td><td>${fmtUSD(payoutACV - deductible)}</td></tr></tfoot>
+        <tfoot><tr class="sfc-net"><td class="left">Insurance pays you now</td><td>${fmtUSD(claimACV - deductible)}</td></tr></tfoot>
       </table>
 
       <p class="section-label sfc-stack-label ins-gap">Second check — recoverable depreciation, paid once the work is complete</p>
@@ -2025,7 +2028,7 @@ function renderSfcEstimate() {
         </tbody>
         <tfoot><tr class="sfc-net"><td class="left">Insurance pays you on completion</td><td>${fmtUSD(recTotal)}</td></tr></tfoot>
       </table>
-      <p class="ho-fine">Total from insurance for this work: ${fmtUSD(payoutACV - deductible)} + ${fmtUSD(recTotal)} = ${fmtUSD(insurancePays)}.</p>
+      <p class="ho-fine">Total from insurance: ${fmtUSD(claimACV - deductible)} + ${fmtUSD(recTotal)} = ${fmtUSD(claimACV - deductible + recTotal)}. ACV is paid on every line whether or not the work is contracted; recoverable depreciation is paid only on work that is completed.</p>
     </section>`;
   sfcBarMode("estimate");
   document.getElementById("sfcModal").querySelector(".modal-body").scrollTop = 0;
