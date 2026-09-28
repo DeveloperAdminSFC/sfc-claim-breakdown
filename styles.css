@@ -550,6 +550,11 @@ body {
 .scope-list li.scope-total { border-top: 2px solid #000; border-bottom: 0; margin-top: 4px; padding-top: 12px; font-weight: 800; color: #000; font-size: 16px; }
 .scope-list li.scope-ins { border-bottom: 0; color: var(--ink-soft); }
 .scope-list li.scope-oop { border-top: 1px solid var(--rule-strong); border-bottom: 0; font-weight: 800; color: #000; font-size: 16px; }
+/* How insurance pays you: struck rows for credited trades/items */
+.ins-table td:last-child { width: 180px; }
+.ins-table tr.struck td { color: var(--ink-faint); font-weight: 500; }
+.ins-table tr.struck td:last-child s, .ins-table s { text-decoration: line-through; color: var(--ink-faint); font-weight: 500; }
+.ins-gap { margin-top: 30px; }
 /* ---- Job price stack on the estimate ---- */
 .sfc-stack-label { margin-top: 6px; }
 .summary.sfc-payout + .sfc-stack-label { margin-top: 34px; }

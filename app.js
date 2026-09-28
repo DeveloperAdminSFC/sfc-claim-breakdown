@@ -1395,15 +1395,17 @@ function sfcSetCompleted(it, on) {
 
 // Per trade: contracted RCV (lines NOT credited) and the ACV credited (lines that are).
 function sfcContracted(g) {
-  let rcv = 0, acv = 0, credit = 0, credited = 0, done = 0, doneCount = 0, contractedCount = 0;
+  let rcv = 0, acv = 0, rec = 0, credit = 0, creditRec = 0, credited = 0, done = 0, doneCount = 0, contractedCount = 0;
   for (const it of g.items) {
-    if (sfcIsCredited(it)) { credit += sfcLineACV(it); credited += 1; }
+    const r = Number(it.recoverableDep) || 0;
+    if (sfcIsCredited(it)) { credit += sfcLineACV(it); creditRec += r; credited += 1; }
     else {
-      rcv += Number(it.rcv) || 0; acv += sfcLineACV(it); contractedCount += 1;
+      rcv += Number(it.rcv) || 0; acv += sfcLineACV(it); rec += r; contractedCount += 1;
       if (sfcIsCompleted(it)) { done += Number(it.rcv) || 0; doneCount += 1; }
     }
   }
-  return { rcv, acv, credit, credited, done, doneCount, contractedCount };
+  // rec / creditRec: recoverable depreciation on contracted vs credited lines.
+  return { rcv, acv, rec, credit, creditRec, credited, done, doneCount, contractedCount };
 }
 // Status of a trade's contracted scope: "" (nothing done), "partial" or "complete".
 function sfcStatus(c) {
@@ -1895,6 +1897,17 @@ function renderSfcEstimate() {
         <td class="${pctCls(grossPct)}">${fmtPct1(grossPct)}</td>
       </tr>`;
 
+  // ---- homeowner pages: shared header, per-trade insurance rows ----
+  const hoHead = (eyebrow) => `
+      <div class="doc-head">
+        <p class="doc-eyebrow">Summit First Construction · ${eyebrow}</p>
+        <h1 class="doc-title sfc-title">${esc(client !== "—" ? client : eyebrow)}</h1>
+        <p class="doc-sub">${subline ? `${subline} · ` : ""}Prepared ${new Date().toLocaleDateString("en-US")}</p>
+      </div>`;
+  // Every trade on the claim (credited ones too — shown struck, never added).
+  const insRows = allGroups.filter((g) => g.items.length).map((g) => ({ g, c: sfcContracted(g) }));
+  const recTotal = insRows.reduce((a, t) => a + t.c.rec, 0);
+
   // ---- p2: homeowner scope (left) + out-of-pocket (right) ----
   const scopeRows = rows
     .map((x) => `
@@ -1957,19 +1970,51 @@ function renderSfcEstimate() {
           </table>
         </div>
       </div>
-      ${creditedLines.length ? `
-      <p class="section-label sfc-stack-label">ACV credits — items credited back to you</p>
+      <p class="ho-fine">This is a preliminary estimate, not a binding contract. Final pricing may change with conditions found during the project or changes in scope.</p>
+    </section>
+
+    <section class="page sfc-homeowner">
+      ${hoHead("ACV Credits")}
+      <p class="section-label sfc-stack-label">Items credited back to you</p>
       <table class="summary sfc-est sfc-credits">
         <thead><tr><th class="left">Trade</th><th class="left">Item</th><th>ACV</th></tr></thead>
-        <tbody>${creditedLines.map((it) => `
+        <tbody>${creditedLines.length ? creditedLines.map((it) => `
           <tr>
             <td class="left">${esc(sfcServiceName(it.trade || "Not Categorized"))}</td>
             <td class="left desc">${esc(it.description)}</td>
             <td>${fmtUSD(sfcLineACV(it))}</td>
-          </tr>`).join("")}</tbody>
-        <tfoot><tr><td class="left" colspan="2">Total ACV credits</td><td>${fmtUSD(acvCredits)}</td></tr></tfoot>
-      </table>` : ""}
-      <p class="ho-fine">This is a preliminary estimate, not a binding contract. Final pricing may change with conditions found during the project or changes in scope.</p>
+          </tr>`).join("") : `<tr><td class="left" colspan="3"><span class="sfc-muted">No items credited.</span></td></tr>`}</tbody>
+        <tfoot><tr class="sfc-net"><td class="left" colspan="2">Total ACV credits</td><td>${fmtUSD(acvCredits)}</td></tr></tfoot>
+      </table>
+    </section>
+
+    <section class="page sfc-homeowner">
+      ${hoHead("How Insurance Pays You")}
+      <p class="section-label sfc-stack-label">First check — actual cash value (ACV)</p>
+      <table class="summary sfc-est sfc-stack ins-table">
+        <thead><tr><th class="left">Trade</th><th>ACV</th></tr></thead>
+        <tbody>${insRows.map((t) => `
+          <tr class="${t.c.rcv <= 0 ? "struck" : ""}">
+            <td class="left">${esc(sfcServiceName(t.g.trade))}${t.c.rcv <= 0 ? ' <span class="sfc-muted">not contracted</span>' : t.c.credited ? ` <span class="sfc-muted">${t.c.credited} item${t.c.credited === 1 ? "" : "s"} credited: <s>${fmtUSD(t.c.credit)}</s></span>` : ""}</td>
+            <td>${t.c.rcv <= 0 ? `<s>${fmtUSD(t.c.credit)}</s>` : fmtUSD(t.c.acv)}</td>
+          </tr>`).join("")}
+          <tr><td class="left">(−) Your deductible</td><td>${paren(deductible)}</td></tr>
+        </tbody>
+        <tfoot><tr class="sfc-net"><td class="left">Insurance pays you now</td><td>${fmtUSD(payoutACV - deductible)}</td></tr></tfoot>
+      </table>
+
+      <p class="section-label sfc-stack-label ins-gap">Second check — recoverable depreciation, paid once the work is complete</p>
+      <table class="summary sfc-est sfc-stack ins-table">
+        <thead><tr><th class="left">Trade</th><th>Recoverable Dep.</th></tr></thead>
+        <tbody>${insRows.map((t) => `
+          <tr class="${t.c.rcv <= 0 ? "struck" : ""}">
+            <td class="left">${esc(sfcServiceName(t.g.trade))}${t.c.rcv <= 0 ? ' <span class="sfc-muted">not contracted</span>' : t.c.creditRec > 0 ? ` <span class="sfc-muted">credited items: <s>${fmtUSD(t.c.creditRec)}</s></span>` : ""}</td>
+            <td>${t.c.rcv <= 0 ? `<s>${fmtUSD(t.c.creditRec)}</s>` : fmtUSD(t.c.rec)}</td>
+          </tr>`).join("")}
+        </tbody>
+        <tfoot><tr class="sfc-net"><td class="left">Insurance pays you on completion</td><td>${fmtUSD(recTotal)}</td></tr></tfoot>
+      </table>
+      <p class="ho-fine">Total from insurance for this work: ${fmtUSD(payoutACV - deductible)} + ${fmtUSD(recTotal)} = ${fmtUSD(insurancePays)}.</p>
     </section>`;
   sfcBarMode("estimate");
   document.getElementById("sfcModal").querySelector(".modal-body").scrollTop = 0;
