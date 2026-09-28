@@ -1323,8 +1323,8 @@ function sfcIsBid(trade) {
 }
 const SFC_TARGET_MARGIN = 33; // required gross margin, % of revenue
 // Other job costs (every COGS line that is not labor or materials) are always a flat
-// 20% of the contracted pay out — never per square (Yash's rule; history says 20.5%).
-const SFC_OTHER_PCT = 20;
+// 21% of the net contracted amount — never per square (Yash's rule, 2026-09-28; history says 20.5%).
+const SFC_OTHER_PCT = 21;
 
 // "28.40 SQ" / "1,234.5 SF" → { value, unit }; null when the quantity has no unit.
 function parseQuantity(q) {
