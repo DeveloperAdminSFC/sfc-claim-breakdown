@@ -532,11 +532,13 @@ body {
 /* ---- Price Snapshot (whiteboard) ---- */
 .snap td.trade { font-weight: 800; }
 .snap .snap-sub { display: block; font-size: 11px; font-weight: 500; color: var(--ink-soft); margin-top: 2px; white-space: normal; max-width: 260px; }
-.snap .snap-up { font-size: 12px; font-weight: 700; color: var(--neg); margin-top: 2px; }
+.snap .snap-up { font-size: 11.5px; font-weight: 700; color: var(--neg); margin-left: 4px; }
+.snap tbody td, .snap tfoot td { vertical-align: middle; }
 .snap tr.snap-money td { border-top: 2px solid var(--rule-strong); }
 .snap tr.snap-money + tr.snap-money td { border-top: 1px solid var(--rule); }
-.snap tfoot tr.snap-net td { border-top: 2px solid #000; font-size: 15px; padding-top: 12px; }
-.snap tfoot tr.sfc-net td { border-top: 0; padding-top: 4px; }
+.snap tfoot tr.sfc-net td { border-top: 2px solid #000; }
+.snap tfoot td.trade { font-size: 15px; }
+.sfc-homeowner .sfc-credits { margin-top: 10px; }
 /* ---- Homeowner page: scope list ---- */
 .ho-grid-wide { grid-template-columns: 1.25fr 1fr; }
 .scope-list { list-style: none; margin: 0; padding: 0; font-size: 14px; }

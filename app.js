@@ -1805,6 +1805,7 @@ function renderSfcEstimate() {
   const money0 = (n) => (n == null ? "—" : Number(n).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }));
   const pctCls = (pct) => (pct == null ? "" : pct >= SFC_TARGET_MARGIN ? "pos" : "neg");
   const paren = (n) => (n > 0 ? `(${fmtUSD(n)})` : fmtUSD(0));
+  const subline = [md.insurance_company ? esc(md.insurance_company) : "", crDate !== "—" ? `Claim report ${esc(crDate)}` : ""].filter(Boolean).join(" · ");
 
   // Trades — contracted scope (credited lines are out of the job) plus upgrades.
   const rows = allGroups
@@ -1839,9 +1840,6 @@ function renderSfcEstimate() {
   const contractedTotal = payout + upgrades;
   const tradeCost = rows.filter((r) => r.priced).reduce((a, r) => a + r.cost, 0);
   const grossPct = contractedTotal > 0 ? ((contractedTotal - tradeCost) / contractedTotal) * 100 : null;
-  // Other job costs (20% of contracted) sit under the table, not inside the whiteboard math.
-  const other = contractedTotal * (SFC_OTHER_PCT / 100);
-  const netPct = contractedTotal > 0 ? ((contractedTotal - tradeCost - other) / contractedTotal) * 100 : null;
 
   // Money: ACV credits, marketing credits, deductible, job value, who pays what.
   const acvCredits = sfcTotalCredits();
@@ -1851,7 +1849,6 @@ function renderSfcEstimate() {
   const jobValue = contractedTotal - acvCredits - marketing;
   const insurancePays = payout - deductible;
   const outOfPocket = deductible + upgrades - acvCredits - marketing; // === jobValue − insurancePays
-  const netCredit = acvCredits + marketing - deductible;               // whiteboard TOTAL: credits − deductible
   const doneRCV = rows.reduce((a, r) => a + r.c.done, 0);
 
   // Per-unit view: money cells carry their unit (trade rows only).
@@ -1862,23 +1859,18 @@ function renderSfcEstimate() {
   const tradeRows = rows
     .map((x) => `
       <tr>
-        <td class="left trade">${esc(x.g.trade)}${sfcStatusBadge(x.c)}${x.ups.length ? `<div class="snap-sub">– upgrades: ${esc(x.ups.map((u) => u.description || "upgrade").join(", "))}</div>` : ""}</td>
+        <td class="left trade">${esc(x.g.trade)}${sfcStatusBadge(x.c)}${x.ups.map((u) => `<div class="snap-sub">– ${esc(u.description || "upgrade")} <span class="snap-up">+${money0(u.price)}</span></div>`).join("")}</td>
         <td class="center">${x.meas != null && x.uom ? `${esc(x.meas)} ${esc(x.uom)}` : ""}</td>
         <td class="sub">${x.rcv > 0 ? cell(x.acv, x) : "—"}</td>
-        <td class="sub">${x.rcv > 0 ? cell(x.rcv, x) : "—"}${x.upPrice > 0 ? `<div class="snap-up">+${money0(x.upPrice)}</div>` : ""}</td>
+        <td class="sub">${x.rcv > 0 ? cell(x.rcv, x) : "—"}</td>
         <td>${cell(x.contracted, x)}</td>
         <td>${x.priced ? cell(x.cost, x) : "—"}</td>
         <td class="${pctCls(x.pct)}">${x.priced ? fmtPct1(x.pct) : "—"}</td>
       </tr>`)
     .join("");
-  const creditNames = (() => {
-    const names = creditedLines.map((it) => it.description);
-    const shown = names.slice(0, 6);
-    return shown.length ? esc(shown.join(", ")) + (names.length > shown.length ? ` +${names.length - shown.length} more` : "") : "none";
-  })();
   const moneyRows = `
       <tr class="snap-money">
-        <td class="left trade">ACV CREDITS<div class="snap-sub">${creditNames}</div></td>
+        <td class="left trade">ACV CREDITS</td>
         <td></td>
         <td class="sub">${acvCredits > 0 ? fmtUSD(acvCredits) : "—"}</td>
         <td class="sub"></td>
@@ -1891,25 +1883,13 @@ function renderSfcEstimate() {
         <td></td><td class="sub"></td><td class="sub"></td>
         <td class="pos">+${fmtUSD(marketing)}</td>
         <td></td><td></td>
-      </tr>` : ""}
-      <tr class="snap-money">
-        <td class="left trade">DEDUCTIBLE${sfc.deductible == null ? `<div class="snap-sub">not stated on the claim — enter it on the measurements screen</div>` : ""}</td>
-        <td></td><td class="sub"></td><td class="sub"></td>
-        <td class="neg">${deductible > 0 ? `(${fmtUSD(deductible)})` : "—"}</td>
-        <td></td><td></td>
-      </tr>`;
+      </tr>` : ""}`;
   const totalRows = `
-      <tr class="snap-net">
-        <td class="left trade">TOTAL<div class="snap-sub">credits − deductible</div></td>
-        <td></td><td class="sub"></td><td class="sub"></td>
-        <td class="${netCredit >= 0 ? "pos" : "neg"}">${netCredit >= 0 ? fmtUSD(netCredit) : `(${fmtUSD(-netCredit)})`}</td>
-        <td></td><td></td>
-      </tr>
       <tr class="sfc-net">
-        <td class="left trade"></td>
+        <td class="left trade">TOTAL${upgrades > 0 ? `<div class="snap-sub">incl. upgrades <span class="snap-up">+${money0(upgrades)}</span></div>` : ""}</td>
         <td></td>
         <td class="sub">${money0(payoutACV)}</td>
-        <td class="sub">${money0(payout)}${upgrades > 0 ? `<div class="snap-up">+${money0(upgrades)}</div>` : ""}</td>
+        <td class="sub">${money0(payout)}</td>
         <td>${money0(contractedTotal)}</td>
         <td>${money0(tradeCost)}</td>
         <td class="${pctCls(grossPct)}">${fmtPct1(grossPct)}</td>
@@ -1927,7 +1907,7 @@ function renderSfcEstimate() {
       <div class="doc-head">
         <p class="doc-eyebrow">SFC Estimate · Price Snapshot</p>
         <h1 class="doc-title sfc-title">${esc(client !== "—" ? client : "SFC Estimate")}</h1>
-        <p class="doc-sub">${esc(md.insurance_company || "")}${md.insurance_company ? " · " : ""}Claim report ${esc(crDate)}</p>
+        ${subline ? `<p class="doc-sub">${subline}</p>` : ""}
       </div>
       <table class="summary sfc-est sfc-payout snap">
         <thead>
@@ -1941,14 +1921,13 @@ function renderSfcEstimate() {
         <tbody>${tradeRows}${moneyRows}</tbody>
         <tfoot>${totalRows}</tfoot>
       </table>
-      <p class="sfc-rates">Margins are gross of other job costs. Other job costs at ${SFC_OTHER_PCT}% of contracted = <b>${fmtUSD(other)}</b> → job margin after other costs <b>${fmtPct1(netPct)}</b>.${doneRCV > 0 ? ` Work already completed: <b>${fmtUSD(doneRCV)}</b> of ${fmtUSD(payout)} contracted RCV.` : ""}</p>
     </section>
 
     <section class="page sfc-homeowner">
       <div class="doc-head">
         <p class="doc-eyebrow">Summit First Construction · Preliminary Pricing</p>
         <h1 class="doc-title sfc-title">${esc(client !== "—" ? client : "Preliminary Pricing")}</h1>
-        <p class="doc-sub">${esc(md.insurance_company || "")}${md.insurance_company ? " · " : ""}Claim report ${esc(crDate)} · Prepared ${new Date().toLocaleDateString("en-US")}</p>
+        <p class="doc-sub">${subline ? `${subline} · ` : ""}Prepared ${new Date().toLocaleDateString("en-US")}</p>
       </div>
       <div class="ho-grid ho-grid-wide">
         <div>
@@ -1976,9 +1955,20 @@ function renderSfcEstimate() {
             </tbody>
             <tfoot><tr class="sfc-net"><td class="left">Out-of-pocket cost</td><td>${fmtUSD(outOfPocket)}</td></tr></tfoot>
           </table>
-          <p class="ho-note">Insurance pays ${fmtUSD(payout)} for this work less your ${fmtUSD(deductible)} deductible: ${fmtUSD(payoutACV)} now and ${fmtUSD(payout - payoutACV)} (recoverable depreciation) once the work is complete.</p>
         </div>
       </div>
+      ${creditedLines.length ? `
+      <p class="section-label sfc-stack-label">ACV credits — items credited back to you</p>
+      <table class="summary sfc-est sfc-credits">
+        <thead><tr><th class="left">Trade</th><th class="left">Item</th><th>ACV</th></tr></thead>
+        <tbody>${creditedLines.map((it) => `
+          <tr>
+            <td class="left">${esc(sfcServiceName(it.trade || "Not Categorized"))}</td>
+            <td class="left desc">${esc(it.description)}</td>
+            <td>${fmtUSD(sfcLineACV(it))}</td>
+          </tr>`).join("")}</tbody>
+        <tfoot><tr><td class="left" colspan="2">Total ACV credits</td><td>${fmtUSD(acvCredits)}</td></tr></tfoot>
+      </table>` : ""}
       <p class="ho-fine">This is a preliminary estimate, not a binding contract. Final pricing may change with conditions found during the project or changes in scope.</p>
     </section>`;
   sfcBarMode("estimate");
