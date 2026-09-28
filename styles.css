@@ -437,7 +437,7 @@ body {
 .sfc-form-foot .btn { height: 44px; padding: 0 22px; font-size: 15px; }
 /* ---- Guided walk: trade screens (Credit ACV) ---- */
 /* The nav bar and the column headings freeze at the top of the modal's scroll area. */
-.sfc-tradenav { position: sticky; top: -20px; z-index: 3; display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 16px; background: #fff; margin: -20px -20px 14px; padding: 14px 20px; border-bottom: 1px solid var(--rule); min-height: 64px; }
+.sfc-tradenav { position: sticky; top: 0; z-index: 3; display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 16px; background: #fff; margin: 0 -20px 14px; padding: 14px 20px; border-bottom: 1px solid var(--rule); min-height: 64px; }
 .sfc-tradenav-title { display: flex; flex-direction: column; gap: 2px; }
 .sfc-tradenav-title .sfc-step { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-faint); }
 .sfc-tradenav-title .trade-cell { font-size: 20px; font-weight: 800; color: var(--ink); }
@@ -445,7 +445,7 @@ body {
 .sfc-tradenav-credits b { display: block; font-size: 18px; color: var(--pos); font-variant-numeric: tabular-nums; }
 .btn-nav { height: 44px; min-width: 56px; padding: 0 18px; font-size: 16px; font-weight: 700; }
 .sfc-lines { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 14px; }
-.sfc-lines thead th { position: sticky; top: 44px; z-index: 2; background: #fff; text-align: right; font-size: 10.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-faint); padding: 8px 10px 9px; border-bottom: 2px solid var(--rule-strong); white-space: nowrap; }
+.sfc-lines thead th { position: sticky; top: var(--navh, 64px); z-index: 2; background: #fff; text-align: right; font-size: 10.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-faint); padding: 8px 10px 9px; border-bottom: 2px solid var(--rule-strong); white-space: nowrap; }
 .sfc-lines th.left, .sfc-lines td.left { text-align: left; }
 .sfc-lines th.num, .sfc-lines td.num { text-align: left; width: 56px; color: var(--ink-faint); }
 .sfc-lines td { padding: 9px 10px; border-bottom: 1px solid var(--rule); text-align: right; font-variant-numeric: tabular-nums; vertical-align: middle; }
@@ -514,6 +514,10 @@ body {
 .sfc-marketing th.trade, .sfc-marketing td.trade { width: 40%; }
 .sfc-marketing select.input { width: 260px; }
 .sfc-marketing td.num .input { width: 160px; }
+/* The SFC modal scrolls with no top padding so the sticky nav bar sits flush at the scroll edge
+   and nothing shows above it; the estimate pages get their gap back via margin. */
+#sfcModal .modal-body { padding-top: 0; }
+#sfcBody > section.page:first-child { margin-top: 20px; }
 /* Completed-work flag: blue rows, whole-trade toggles in the nav bar, status badges */
 .sfc-tradenav { grid-template-columns: auto 1fr auto auto auto; }
 .sfc-tradenav-toggles { display: flex; flex-direction: column; gap: 6px; }

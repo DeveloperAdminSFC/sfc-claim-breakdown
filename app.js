@@ -1549,6 +1549,10 @@ function renderSfcTrade(g, idx, n) {
     document.getElementById("sfcAllDone").checked = g.items.length > 0 && c.doneCount === g.items.length;
     wireRows();
   };
+  // The column headings stick just under the nav bar, whose height depends on the wrapped
+  // toggles, so measure it instead of guessing.
+  const nav = document.querySelector(".sfc-tradenav");
+  document.getElementById("sfcBody").style.setProperty("--navh", `${nav.offsetHeight}px`);
   const byKey = new Map(g.items.map((it) => [String(sfcLineKey(it)), it]));
   const wireRows = () => {
     for (const box of document.querySelectorAll(".sfc-credit")) {
@@ -1903,7 +1907,7 @@ function renderSfcEstimate() {
       </tr>`;
   const moneyRows = `
       <tr class="snap-money">
-        <td class="left trade">ACV CREDITS<div class="snap-sub">insurance ACV on lines not contracted — covers the homeowner's deductible</div></td>
+        <td class="left trade">ACV CREDITS</td>
         <td></td>
         <td class="sub">${acvCredits > 0 ? fmtUSD(acvCredits) : "—"}</td>
         <td class="sub"></td>
