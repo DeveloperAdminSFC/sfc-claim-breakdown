@@ -1841,14 +1841,18 @@ function renderSfcEstimate() {
   const upgrades = rows.reduce((a, r) => a + r.upPrice, 0);
   const contractedTotal = payout + upgrades;
   const tradeCost = rows.filter((r) => r.priced).reduce((a, r) => a + r.cost, 0);
-  const grossPct = contractedTotal > 0 ? ((contractedTotal - tradeCost) / contractedTotal) * 100 : null;
 
   // Money: ACV credits, marketing credits, deductible, job value, who pays what.
   const acvCredits = sfcTotalCredits();
   const creditedLines = sfcCreditedLines();
   const marketing = sfcMarketingTotal();
   const deductible = sfc.deductible != null ? Number(sfc.deductible) || 0 : 0;
-  const jobValue = contractedTotal - acvCredits - marketing;
+  const jobValue = contractedTotal - acvCredits - marketing;   // net contracted amount (the TOTAL row)
+  // Other job costs: every COGS line that is not labor or materials — a flat share of the net
+  // contracted amount. The TOTAL row's SFC cost and margin are after it.
+  const other = jobValue * (SFC_OTHER_PCT / 100);
+  const totalCost = tradeCost + other;
+  const netPct = jobValue > 0 ? ((jobValue - totalCost) / jobValue) * 100 : null;
   const insurancePays = payout - deductible;
   const outOfPocket = deductible + upgrades - acvCredits - marketing; // === jobValue − insurancePays
   const doneRCV = rows.reduce((a, r) => a + r.c.done, 0);
@@ -1876,25 +1880,32 @@ function renderSfcEstimate() {
         <td></td>
         <td class="sub">${acvCredits > 0 ? fmtUSD(acvCredits) : "—"}</td>
         <td class="sub"></td>
-        <td class="pos">${acvCredits > 0 ? `+${fmtUSD(acvCredits)}` : "—"}</td>
+        <td class="neg">${acvCredits > 0 ? `(${fmtUSD(acvCredits)})` : "—"}</td>
         <td></td><td></td>
       </tr>
       ${marketing > 0 ? `
       <tr class="snap-money">
         <td class="left trade">MARKETING CREDITS<div class="snap-sub">${esc(sfc.marketingCredits.map((m) => m.type).join(", "))}</div></td>
         <td></td><td class="sub"></td><td class="sub"></td>
-        <td class="pos">+${fmtUSD(marketing)}</td>
+        <td class="neg">(${fmtUSD(marketing)})</td>
         <td></td><td></td>
-      </tr>` : ""}`;
+      </tr>` : ""}
+      <tr class="snap-money">
+        <td class="left trade">OTHER JOB COSTS<div class="snap-sub">${SFC_OTHER_PCT}% of contracted</div></td>
+        <td></td><td class="sub"></td><td class="sub"></td>
+        <td></td>
+        <td>${money0(other)}</td>
+        <td></td>
+      </tr>`;
   const totalRows = `
       <tr class="sfc-net">
-        <td class="left trade">TOTAL${upgrades > 0 ? `<div class="snap-sub">incl. upgrades <span class="snap-up">+${money0(upgrades)}</span></div>` : ""}</td>
+        <td class="left trade">TOTAL${upgrades > 0 ? `<div class="snap-sub">Incl. Upgrades <span class="snap-up">+${money0(upgrades)}</span></div>` : ""}</td>
         <td></td>
         <td class="sub">${money0(payoutACV)}</td>
         <td class="sub">${money0(payout)}</td>
-        <td>${money0(contractedTotal)}</td>
-        <td>${money0(tradeCost)}</td>
-        <td class="${pctCls(grossPct)}">${fmtPct1(grossPct)}</td>
+        <td>${money0(jobValue)}</td>
+        <td>${money0(totalCost)}</td>
+        <td class="${pctCls(netPct)}">${fmtPct1(netPct)}</td>
       </tr>`;
 
   // ---- homeowner pages: shared header, per-trade insurance rows ----
