@@ -1941,8 +1941,7 @@ function renderSfcEstimate() {
   const scopeRows = rows
     .filter((x) => x.rcv > 0 || x.ups.length)
     .map((x) => `
-      <li class="scope-trade"><span>${esc(sfcServiceName(x.g.trade))}${sfcStatus(x.c) === "complete" ? ' <span class="sfc-badge complete">Completed</span>' : ""}</span><span class="scope-amt">${x.rcv > 0 ? fmtUSD(x.rcv) : "—"}</span></li>
-      ${x.ups.map((u) => `<li class="scope-up"><span>• ${esc(u.description || "Upgrade")}</span><span class="scope-amt">+${fmtUSD(u.price)}</span></li>`).join("")}`)
+      <li class="scope-trade"><span>${esc(sfcServiceName(x.g.trade))}${sfcStatus(x.c) === "complete" ? ' <span class="sfc-badge complete">Completed</span>' : ""}</span><span class="scope-amt">${x.rcv > 0 ? fmtUSD(x.rcv) : "—"}</span></li>`)
     .join("");
 
   document.getElementById("sfcBody").innerHTML = `
@@ -1977,7 +1976,7 @@ function renderSfcEstimate() {
           <p class="section-label sfc-stack-label">Scope of work</p>
           <ul class="scope-list">
             ${scopeRows || `<li class="scope-trade"><span>Nothing contracted</span><span class="scope-amt">—</span></li>`}
-            <li class="scope-adj"><span>(+) Upgrades</span><span class="scope-amt">${fmtUSD(upgrades)}</span></li>
+            <li class="scope-adj"><span>(+) Upgrades${sfc.upgrades.length ? ` <span class="sfc-muted">${esc(sfc.upgrades.map((u) => u.description || "upgrade").join(", "))}</span>` : ""}</span><span class="scope-amt">${fmtUSD(upgrades)}</span></li>
             <li class="scope-adj"><span>(−) Marketing credits</span><span class="scope-amt">${paren(marketing)}</span></li>
             <li class="scope-total"><span>Total job value</span><span class="scope-amt">${fmtUSD(jobValue)}</span></li>
             <li class="scope-ins"><span>Insurance is paying you</span><span class="scope-amt">${fmtUSD(insurancePays)}</span></li>
