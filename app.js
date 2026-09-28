@@ -1395,17 +1395,17 @@ function sfcSetCompleted(it, on) {
 
 // Per trade: contracted RCV (lines NOT credited) and the ACV credited (lines that are).
 function sfcContracted(g) {
-  let rcv = 0, acv = 0, rec = 0, credit = 0, creditRec = 0, credited = 0, done = 0, doneCount = 0, contractedCount = 0;
+  let rcv = 0, acv = 0, rec = 0, credit = 0, creditRcv = 0, creditRec = 0, credited = 0, done = 0, doneCount = 0, contractedCount = 0;
   for (const it of g.items) {
     const r = Number(it.recoverableDep) || 0;
-    if (sfcIsCredited(it)) { credit += sfcLineACV(it); creditRec += r; credited += 1; }
+    if (sfcIsCredited(it)) { credit += sfcLineACV(it); creditRcv += Number(it.rcv) || 0; creditRec += r; credited += 1; }
     else {
       rcv += Number(it.rcv) || 0; acv += sfcLineACV(it); rec += r; contractedCount += 1;
       if (sfcIsCompleted(it)) { done += Number(it.rcv) || 0; doneCount += 1; }
     }
   }
   // rec / creditRec: recoverable depreciation on contracted vs credited lines.
-  return { rcv, acv, rec, credit, creditRec, credited, done, doneCount, contractedCount };
+  return { rcv, acv, rec, credit, creditRcv, creditRec, credited, done, doneCount, contractedCount };
 }
 // Status of a trade's contracted scope: "" (nothing done), "partial" or "complete".
 function sfcStatus(c) {
@@ -1812,15 +1812,17 @@ function renderSfcEstimate() {
   // Trades — contracted scope (credited lines are out of the job) plus upgrades.
   const rows = allGroups
     .map((g) => ({ g, c: sfcContracted(g), ups: sfcUpgradesFor(g.trade) }))
-    .filter(({ c, ups }) => c.rcv > 0 || ups.length)
+    .filter(({ g, ups }) => g.items.length || ups.length)
     .map(({ g, c, ups }) => {
-      const rcv = c.rcv;
+      const rcv = c.rcv;                      // contracted RCV — what we bill from the claim
       const acv = c.acv;
+      const payRCV = c.rcv + c.creditRcv;     // insurance payout on the whole trade, credited or not
+      const payACV = c.acv + c.credit;
       const upPrice = ups.reduce((a, u) => a + (Number(u.price) || 0), 0);
       const upCost = ups.reduce((a, u) => a + (Number(u.cost) || 0), 0);
       const contracted = rcv + upPrice;
       const uom = SFC_TRADE_UOM[g.trade];
-      const base = { g, c, rcv, acv, ups, upPrice, upCost, contracted, uom, meas: null };
+      const base = { g, c, rcv, acv, payRCV, payACV, ups, upPrice, upCost, contracted, uom, meas: null };
       if (sfcIsClaimOnly(g.trade) || rcv <= 0) {
         const priced = ups.length > 0 && upCost > 0;
         const cost = priced ? upCost : null;
@@ -1836,8 +1838,10 @@ function renderSfcEstimate() {
       const pct = priced && contracted > 0 ? ((contracted - cost) / contracted) * 100 : null;
       return { ...base, meas, priced, cost, pct };
     });
-  const payout = rows.reduce((a, r) => a + r.rcv, 0);          // insurance pays (contracted RCV)
-  const payoutACV = rows.reduce((a, r) => a + r.acv, 0);       // first check for that scope
+  const payout = rows.reduce((a, r) => a + r.rcv, 0);          // contracted RCV (what we bill from the claim)
+  const payoutACV = rows.reduce((a, r) => a + r.acv, 0);       // its ACV
+  const claimRCV = rows.reduce((a, r) => a + r.payRCV, 0);     // insurance payout on every trade
+  const claimACVAll = rows.reduce((a, r) => a + r.payACV, 0);
   const upgrades = rows.reduce((a, r) => a + r.upPrice, 0);
   const contractedTotal = payout + upgrades;
   const tradeCost = rows.filter((r) => r.priced).reduce((a, r) => a + r.cost, 0);
@@ -1867,8 +1871,8 @@ function renderSfcEstimate() {
       <tr>
         <td class="left trade">${esc(x.g.trade)}${sfcStatusBadge(x.c)}${x.ups.map((u) => `<div class="snap-sub">– ${esc(u.description || "upgrade")} <span class="snap-up">+${money0(u.price)}</span></div>`).join("")}</td>
         <td class="center">${x.meas != null && x.uom ? `${esc(x.meas)} ${esc(x.uom)}` : ""}</td>
-        <td class="sub">${x.rcv > 0 ? cell(x.acv, x) : "—"}</td>
-        <td class="sub">${x.rcv > 0 ? cell(x.rcv, x) : "—"}</td>
+        <td class="sub">${x.payRCV > 0 ? cell(x.payACV, x) : "—"}</td>
+        <td class="sub">${x.payRCV > 0 ? cell(x.payRCV, x) : "—"}</td>
         <td>${cell(x.contracted, x)}</td>
         <td>${x.priced ? cell(x.cost, x) : "—"}</td>
         <td class="${pctCls(x.pct)}">${x.priced ? fmtPct1(x.pct) : "—"}</td>
@@ -1903,8 +1907,8 @@ function renderSfcEstimate() {
       <tr class="sfc-net">
         <td class="left trade">TOTAL${upgrades > 0 ? `<div class="snap-sub">Incl. Upgrades <span class="snap-up">+${money0(upgrades)}</span></div>` : ""}</td>
         <td></td>
-        <td class="sub">${money0(payoutACV)}</td>
-        <td class="sub">${money0(payout)}</td>
+        <td class="sub">${money0(claimACVAll)}</td>
+        <td class="sub">${money0(claimRCV)}</td>
         <td>${money0(jobValue)}</td>
         <td>${money0(totalCost)}</td>
         <td class="${pctCls(netPct)}">${fmtPct1(netPct)}</td>
@@ -1924,6 +1928,7 @@ function renderSfcEstimate() {
 
   // ---- p2: homeowner scope (left) + out-of-pocket (right) ----
   const scopeRows = rows
+    .filter((x) => x.rcv > 0 || x.ups.length)
     .map((x) => `
       <li class="scope-trade"><span>${esc(sfcServiceName(x.g.trade))}${sfcStatus(x.c) === "complete" ? ' <span class="sfc-badge complete">Completed</span>' : ""}</span><span class="scope-amt">${x.rcv > 0 ? fmtUSD(x.rcv) : "—"}</span></li>
       ${x.ups.map((u) => `<li class="scope-up"><span>• ${esc(u.description || "Upgrade")}</span><span class="scope-amt">+${fmtUSD(u.price)}</span></li>`).join("")}`)
