@@ -1314,6 +1314,7 @@ let sfc = {
   groups: [], rates: null, credits: {}, deductible: null, step: 0, itemsRef: null,
   upgrades: [], marketingCredits: [], completed: {},
   applied: {}, // trade -> ACV credit dollars the homeowner puts toward that trade's work (an upgrade)
+  mode: {},    // trade -> "measure" (rate × measurement) or "bid" (typed cost); unset = the default below
 };
 // Marketing credits the homeowner can earn; each one is a typed amount on the measurements screen.
 const SFC_MARKETING_TYPES = ["Yard sign", "Referral", "Review", "Veteran discount"];
@@ -1321,6 +1322,13 @@ const SFC_MARKETING_TYPES = ["Yard sign", "Referral", "Review", "Veteran discoun
 // True when the trade is priced by a typed bid rather than measurement × rate.
 function sfcIsBid(trade) {
   return SFC_BID_TRADES.has(trade) || !sfcRateFor(trade);
+}
+// How a trade is priced on this estimate. The estimator can switch any trade between
+// "measure" (history rate × measurement) and "bid" (typed cost); the default is bid for the
+// bid trades and for any trade with no usable history, measure otherwise.
+function sfcMode(trade) {
+  if (sfc.mode[trade] === "measure" || sfc.mode[trade] === "bid") return sfc.mode[trade];
+  return sfcIsBid(trade) ? "bid" : "measure";
 }
 const SFC_TARGET_MARGIN = 33; // required gross margin, % of revenue
 // Other job costs (every COGS line that is not labor or materials) are always a flat
@@ -1437,7 +1445,7 @@ async function openSfcEstimate() {
     sfc.itemsRef = state.items;
     sfc.credits = {}; sfc.completed = {}; sfc.measurements = {}; sfc.bids = {}; sfc.unlocked = {}; sfc.rateEdits = {};
     sfc.deductible = null; sfc.client = ""; sfc.groups = [];
-    sfc.upgrades = []; sfc.marketingCredits = []; sfc.applied = {};
+    sfc.upgrades = []; sfc.marketingCredits = []; sfc.applied = {}; sfc.mode = {};
   }
   if (!sfc.client && state.jobInfo && state.jobInfo.contact_name) sfc.client = state.jobInfo.contact_name;
   const md = state.summary || {};
@@ -1667,22 +1675,29 @@ function renderSfcForm() {
         ${creditCell}
       </tr>`;
       }
-      const bid = sfcIsBid(g.trade);
-      // History rates are locked at the median until unlocked; bid items take a typed cost.
+      const mode = sfcMode(g.trade);
+      const bid = mode === "bid";
+      const modeSwitch = `<span class="sfc-mode" role="group" aria-label="Price by">
+          <button type="button" class="sfc-mode-btn sfc-mode-measure" data-trade="${esc(g.trade)}" aria-pressed="${!bid}">Measure</button>
+          <button type="button" class="sfc-mode-btn sfc-mode-bid" data-trade="${esc(g.trade)}" aria-pressed="${bid}">Bid</button>
+        </span>`;
+      // History rates are locked at the median until unlocked; bid pricing takes a typed cost.
       const unlocked = !!sfc.unlocked[g.trade];
       const median = rate ? Math.round(rate.cost.median * 100) / 100 : null;
       const rateVal = sfc.rateEdits[g.trade] != null ? sfc.rateEdits[g.trade] : median;
-      const rateHTML = bid
+      const rateHTML = modeSwitch + (bid
         ? `<span class="sfc-field"><input class="input sfc-bid" type="number" min="0" step="1" inputmode="decimal"
                   data-trade="${esc(g.trade)}" value="${sfc.bids[g.trade] != null ? esc(sfc.bids[g.trade]) : ""}" placeholder="$" />
            <span class="uom">bid</span></span>`
+        : !rate
+          ? `<span class="sfc-field"><span class="sfc-rate"><em>no SFC rate yet — use Bid</em></span></span>`
         : unlocked
           ? `<span class="sfc-field"><input class="input sfc-rate-in" type="number" min="0" step="0.01" inputmode="decimal"
                   data-trade="${esc(g.trade)}" value="${esc(rateVal)}" />
              <span class="uom">/ ${esc(uom)}</span>
              <button type="button" class="btn btn-ghost btn-lock sfc-lock" data-trade="${esc(g.trade)}" title="Lock back to the median ${fmtRate(median)}">Lock</button></span>`
           : `<span class="sfc-field"><span class="sfc-rate"><b>${fmtRate(median)}</b> / ${esc(uom)}</span>
-             <button type="button" class="btn btn-ghost btn-lock sfc-unlock" data-trade="${esc(g.trade)}" title="Unlock to type a different rate">Unlock</button></span>`;
+             <button type="button" class="btn btn-ghost btn-lock sfc-unlock" data-trade="${esc(g.trade)}" title="Unlock to type a different rate">Unlock</button></span>`);
       return `
       <tr>
         ${tradeCell}
@@ -1776,6 +1791,13 @@ function renderSfcForm() {
     sfc.deductible = d === "" ? null : Math.max(0, Number(d) || 0);
   };
   const rerender = () => { snapshotInputs(); renderSfcForm(); };
+  for (const btn of document.querySelectorAll(".sfc-mode-btn")) {
+    btn.addEventListener("click", () => {
+      snapshotInputs();
+      sfc.mode[btn.dataset.trade] = btn.classList.contains("sfc-mode-bid") ? "bid" : "measure";
+      renderSfcForm();
+    });
+  }
   for (const btn of document.querySelectorAll(".sfc-unlock")) {
     btn.addEventListener("click", () => { snapshotInputs(); sfc.unlocked[btn.dataset.trade] = true; renderSfcForm(); });
   }
@@ -1883,7 +1905,7 @@ function renderSfcEstimate() {
       }
       const rate = sfcRateFor(g.trade);
       const meas = sfc.measurements[g.trade];
-      const bid = sfcIsBid(g.trade) ? sfc.bids[g.trade] : null;
+      const bid = sfcMode(g.trade) === "bid" ? sfc.bids[g.trade] : null;
       const perUnitRate = rate ? (sfc.unlocked[g.trade] && sfc.rateEdits[g.trade] != null ? sfc.rateEdits[g.trade] : rate.cost.median) : null;
       const priced = bid != null ? bid > 0 : perUnitRate != null && meas != null && meas > 0;
       const cost = !priced ? null : (bid != null ? bid : perUnitRate * meas) + upCost;

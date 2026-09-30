@@ -570,6 +570,20 @@ body {
 .ho-sig-label { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-soft); margin-top: 6px; }
 .ho-sig-date { font-size: 12px; color: var(--ink-soft); margin-top: 14px; }
 @media (max-width: 640px) { .ho-sign { grid-template-columns: 1fr; } }
+/* Boxed columns are a full black grid: every cell bordered, black text, centered. */
+.summary.sfc-payout.snap thead th { color: #000; }
+.summary.sfc-payout.snap tbody td:nth-child(n+3), .summary.sfc-payout.snap tfoot td:nth-child(n+3),
+.summary.sfc-payout.snap thead tr:first-child th:nth-child(n+3), .summary.sfc-payout.snap thead tr:last-child th {
+  border: 1.5px solid #000; text-align: center; color: #000;
+}
+.summary.sfc-payout.snap td.sub, .summary.sfc-payout.snap td .dash, .summary.sfc-payout.snap td.sub .dash { color: #000; }
+.summary.sfc-payout.snap tbody tr.snap-money td:nth-child(n+3) { border-top: 1.5px solid #000; }
+/* Measure | Bid switch on the measurements screen */
+.sfc-mode { display: inline-flex; border: 1px solid var(--rule-strong); border-radius: 6px; overflow: hidden; margin-right: 8px; vertical-align: middle; }
+.sfc-mode-btn { border: 0; background: #fff; color: var(--ink-soft); font: inherit; font-size: 11.5px; font-weight: 700; padding: 0 9px; height: 28px; cursor: pointer; }
+.sfc-mode-btn + .sfc-mode-btn { border-left: 1px solid var(--rule-strong); }
+.sfc-mode-btn[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.sfc-form td.cost { white-space: nowrap; }
 /* Matrix column boxes: payout (ACV+RCV together), contracted, SFC cost, margin */
 .summary.sfc-payout.snap { border-collapse: collapse; }
 .summary.sfc-payout.snap thead tr:first-child th:nth-child(3),
