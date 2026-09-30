@@ -570,6 +570,36 @@ body {
 .ho-sig-label { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-soft); margin-top: 6px; }
 .ho-sig-date { font-size: 12px; color: var(--ink-soft); margin-top: 14px; }
 @media (max-width: 640px) { .ho-sign { grid-template-columns: 1fr; } }
+/* Matrix column boxes: payout (ACV+RCV together), contracted, SFC cost, margin */
+.summary.sfc-payout.snap { border-collapse: collapse; }
+.summary.sfc-payout.snap thead tr:first-child th:nth-child(3),
+.summary.sfc-payout.snap thead tr:first-child th:nth-child(4),
+.summary.sfc-payout.snap thead tr:first-child th:nth-child(5),
+.summary.sfc-payout.snap thead tr:first-child th:nth-child(6) { border-left: 2px solid #000; }
+.summary.sfc-payout.snap thead tr:first-child th:nth-child(6) { border-right: 2px solid #000; }
+.summary.sfc-payout.snap thead tr:first-child th:nth-child(3) { border-top: 2px solid #000; }
+.summary.sfc-payout.snap thead tr:first-child th:nth-child(4),
+.summary.sfc-payout.snap thead tr:first-child th:nth-child(5),
+.summary.sfc-payout.snap thead tr:first-child th:nth-child(6) { border-top: 2px solid #000; }
+.summary.sfc-payout.snap thead tr:last-child th:first-child { border-left: 2px solid #000; }
+.summary.sfc-payout.snap thead tr:last-child th:last-child { border-right: 2px solid #000; }
+.summary.sfc-payout.snap thead th.group { border-bottom: 1px solid var(--rule); }
+.summary.sfc-payout.snap tbody td:nth-child(3),
+.summary.sfc-payout.snap tbody td:nth-child(5),
+.summary.sfc-payout.snap tbody td:nth-child(6),
+.summary.sfc-payout.snap tbody td:nth-child(7),
+.summary.sfc-payout.snap tfoot td:nth-child(3),
+.summary.sfc-payout.snap tfoot td:nth-child(5),
+.summary.sfc-payout.snap tfoot td:nth-child(6),
+.summary.sfc-payout.snap tfoot td:nth-child(7) { border-left: 2px solid #000; }
+.summary.sfc-payout.snap tbody td:nth-child(7),
+.summary.sfc-payout.snap tfoot td:nth-child(7) { border-right: 2px solid #000; }
+.summary.sfc-payout.snap tfoot td { border-bottom: 2px solid #000; }
+.summary.sfc-payout.snap thead th { border-bottom: 2px solid #000; }
+.summary.sfc-payout.snap thead tr:first-child th[rowspan] { border-bottom: 2px solid #000; }
+.summary.sfc-payout.snap thead th.sub { border-bottom: 2px solid #000; }
+/* the old sub-column hairline is replaced by the box lines */
+.summary.sfc-payout.snap tbody td.sub:first-of-type, .summary.sfc-payout.snap tfoot td.sub:first-of-type, .summary.sfc-payout.snap thead th.sub:first-of-type { border-left-color: #000; }
 /* ---- Job price stack on the estimate ---- */
 .sfc-stack-label { margin-top: 6px; }
 .summary.sfc-payout + .sfc-stack-label { margin-top: 34px; }
