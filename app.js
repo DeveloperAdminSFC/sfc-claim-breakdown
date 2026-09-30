@@ -1313,6 +1313,7 @@ let sfc = {
   pricing: null, measurements: {}, bids: {}, unlocked: {}, rateEdits: {}, client: "", perUnit: false,
   groups: [], rates: null, credits: {}, deductible: null, step: 0, itemsRef: null,
   upgrades: [], marketingCredits: [], completed: {},
+  applied: {}, // trade -> ACV credit dollars the homeowner puts toward that trade's work (an upgrade)
 };
 // Marketing credits the homeowner can earn; each one is a typed amount on the measurements screen.
 const SFC_MARKETING_TYPES = ["Yard sign", "Referral", "Review", "Veteran discount"];
@@ -1436,7 +1437,7 @@ async function openSfcEstimate() {
     sfc.itemsRef = state.items;
     sfc.credits = {}; sfc.completed = {}; sfc.measurements = {}; sfc.bids = {}; sfc.unlocked = {}; sfc.rateEdits = {};
     sfc.deductible = null; sfc.client = ""; sfc.groups = [];
-    sfc.upgrades = []; sfc.marketingCredits = [];
+    sfc.upgrades = []; sfc.marketingCredits = []; sfc.applied = {};
   }
   if (!sfc.client && state.jobInfo && state.jobInfo.contact_name) sfc.client = state.jobInfo.contact_name;
   const md = state.summary || {};
@@ -1586,6 +1587,25 @@ function sfcUpgradesFor(trade) {
 function sfcUpgradeTotal(trade, field) {
   return sfcUpgradesFor(trade).reduce((a, u) => a + (Number(u[field]) || 0), 0);
 }
+// ACV credits have two uses: applied to a trade (funding an upgrade — e.g. the claim paid to paint
+// the siding, the homeowner puts that money toward replacing it) or, whatever is left, toward the
+// deductible. Applied amounts can never exceed the pool; the pool moves when lines are credited or
+// un-credited on the trade screens, so clamp on every render (trades keep their amount in order
+// until the pool runs out).
+function sfcAppliedTotal() {
+  return Object.values(sfc.applied).reduce((a, v) => a + (Number(v) || 0), 0);
+}
+function sfcClampApplied() {
+  let remaining = sfcTotalCredits();
+  for (const g of sfcJobTrades()) {
+    const t = g.trade;
+    let a = Math.max(0, Number(sfc.applied[t]) || 0);
+    if (a > remaining) a = Math.round(remaining * 100) / 100;
+    remaining -= a;
+    if (a > 0) sfc.applied[t] = a;
+    else delete sfc.applied[t];
+  }
+}
 function sfcMarketingTotal() {
   return sfc.marketingCredits.reduce((a, m) => a + (Number(m.amount) || 0), 0);
 }
@@ -1604,6 +1624,7 @@ function sfcJobTrades() {
 // Measurements — one measurement + SFC cost per contracted trade, an ACV credit to apply per
 // trade, upgrades/add-ons, plus client, deductible and marketing credits.
 function renderSfcForm() {
+  sfcClampApplied();
   const groups = sfcJobTrades();
   const pool = sfcTotalCredits();
   const rows = groups
@@ -1614,6 +1635,11 @@ function renderSfcForm() {
       const uom = SFC_TRADE_UOM[g.trade];
       const rate = sfcRateFor(g.trade);
       const meas = sfc.measurements[g.trade];
+      const applied = sfc.applied[g.trade];
+      const creditCell = `<td class="num credit"><span class="sfc-field">
+          <input class="input sfc-apply" type="number" min="0" step="0.01" inputmode="decimal"
+                 data-trade="${esc(g.trade)}" value="${applied ? esc(applied) : ""}" placeholder="$0" ${pool > 0 ? "" : "disabled"} />
+        </span></td>`;
       const note =
         sfcStatusBadge(c) +
         (c.credited ? `<span class="sfc-credited-note">${c.credited} line${c.credited === 1 ? "" : "s"} credited</span>` : "") +
@@ -1628,6 +1654,7 @@ function renderSfcForm() {
         <td class="num rcv">${fmtUSD(contracted)}</td>
         <td class="num meas"></td>
         <td class="cost"><span class="sfc-rate"><em>${ups.length ? "upgrades only" : "credited"}</em></span></td>
+        ${creditCell}
       </tr>`;
       }
       if (sfcIsClaimOnly(g.trade)) {
@@ -1637,6 +1664,7 @@ function renderSfcForm() {
         <td class="num rcv">${fmtUSD(contracted)}</td>
         <td class="num meas"></td>
         <td class="cost"><span class="sfc-rate"><em>claim only</em></span></td>
+        ${creditCell}
       </tr>`;
       }
       const bid = sfcIsBid(g.trade);
@@ -1665,6 +1693,7 @@ function renderSfcForm() {
           <span class="uom">${esc(uom)}</span>
         </span></td>
         <td class="cost">${rateHTML}</td>
+        ${creditCell}
       </tr>`;
     })
     .join("");
@@ -1697,7 +1726,7 @@ function renderSfcForm() {
     <div class="sfc-tradenav">
       <button type="button" class="btn btn-nav" id="sfcPrevBtn" aria-label="Back to the last trade">←</button>
       <div class="sfc-tradenav-title"><span class="sfc-step">Measurements &amp; pricing</span><span class="trade-cell">All trades</span></div>
-      <div class="sfc-tradenav-credits">ACV credits <b>${fmtUSD(pool)}</b></div>
+      <div class="sfc-tradenav-credits">ACV credits <b>${fmtUSD(pool)}</b><span class="sfc-pool" id="sfcPool">applied ${fmtUSD(sfcAppliedTotal())} · toward deductible ${fmtUSD(pool - sfcAppliedTotal())}</span></div>
       <span></span>
     </div>
     <div class="sfc-controls">
@@ -1705,8 +1734,8 @@ function renderSfcForm() {
       <label>Deductible <span class="sfc-field"><input id="sfcDeductible" class="input" type="number" min="0" step="0.01" inputmode="decimal"
              value="${sfc.deductible != null ? esc(sfc.deductible) : ""}" placeholder="$" title="From the claim when stated; type it when the appraisal leaves it off" /></span></label>
     </div>
-    <table class="sfc-form">
-      <thead><tr><th class="trade">Trade</th><th class="num rcv">Contracted</th><th class="num meas">Measurement</th><th class="cost">SFC cost</th></tr></thead>
+    <table class="sfc-form sfc-form-5">
+      <thead><tr><th class="trade">Trade</th><th class="num rcv">Contracted</th><th class="num meas">Measurement</th><th class="cost">SFC cost</th><th class="num credit">Apply ACV credit</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
     <p class="section-label sfc-upgrades-label">Upgrades &amp; add-ons <span class="sfc-muted">priced on top of the claim — raise the Contracted Amount, not the insurance payout</span></p>
@@ -1729,6 +1758,7 @@ function renderSfcForm() {
     for (const inp of document.querySelectorAll(".sfc-meas")) { const v = Number(inp.value); sfc.measurements[inp.dataset.trade] = v > 0 ? v : null; }
     for (const inp of document.querySelectorAll(".sfc-bid")) { const v = Number(inp.value); sfc.bids[inp.dataset.trade] = v > 0 ? v : null; }
     for (const inp of document.querySelectorAll(".sfc-rate-in")) { const v = Number(inp.value); sfc.rateEdits[inp.dataset.trade] = v > 0 ? v : null; }
+    for (const inp of document.querySelectorAll(".sfc-apply")) { const v = Number(inp.value); if (v > 0) sfc.applied[inp.dataset.trade] = v; else delete sfc.applied[inp.dataset.trade]; }
     for (const u of sfc.upgrades) {
       const q = (cls) => document.querySelector(`.${cls}[data-id="${u.id}"]`);
       if (q("sfc-up-trade")) u.trade = q("sfc-up-trade").value;
@@ -1751,6 +1781,19 @@ function renderSfcForm() {
   }
   for (const btn of document.querySelectorAll(".sfc-lock")) {
     btn.addEventListener("click", () => { snapshotInputs(); sfc.unlocked[btn.dataset.trade] = false; sfc.rateEdits[btn.dataset.trade] = null; renderSfcForm(); });
+  }
+  // Applied credits: keep the pool line live, and never let the applied total exceed the pool.
+  for (const inp of document.querySelectorAll(".sfc-apply")) {
+    inp.addEventListener("input", () => {
+      let total = 0;
+      for (const o of document.querySelectorAll(".sfc-apply")) total += Math.max(0, Number(o.value) || 0);
+      if (total > pool + 0.005) {
+        const over = total - pool;
+        inp.value = String(Math.max(0, Math.round((Number(inp.value) - over) * 100) / 100));
+        total = pool;
+      }
+      document.getElementById("sfcPool").textContent = `applied ${fmtUSD(total)} · toward deductible ${fmtUSD(pool - total)}`;
+    });
   }
   document.getElementById("sfcAddUpgrade").addEventListener("click", () => {
     snapshotInputs();
@@ -1800,6 +1843,7 @@ const sfcServiceName = (t) =>
 //   p2  Homeowner — Scope of work (left) and the out-of-pocket box (right); both land on the
 //       same out-of-pocket number by construction.
 function renderSfcEstimate() {
+  sfcClampApplied();
   const allGroups = sfcJobTrades();
   sfc.groups = allGroups;
   const md = state.summary || {};
@@ -1827,7 +1871,8 @@ function renderSfcEstimate() {
       const upCost = ups.reduce((a, u) => a + (Number(u.cost) || 0), 0);
       const contracted = rcv + upPrice;
       const uom = SFC_TRADE_UOM[g.trade];
-      const base = { g, c, rcv, acv, payRCV, payACV, ups, upPrice, upCost, contracted, uom, meas: null };
+      const applied = Number(sfc.applied[g.trade]) || 0;
+      const base = { g, c, rcv, acv, payRCV, payACV, ups, upPrice, upCost, contracted, applied, uom, meas: null };
       if (sfcIsClaimOnly(g.trade) || rcv <= 0) {
         const priced = ups.length > 0 && upCost > 0;
         const cost = priced ? upCost : null;
@@ -1870,13 +1915,20 @@ function renderSfcEstimate() {
   const recTotal = insRows.reduce((a, t) => a + t.c.rec, 0);               // contracted lines
   const pwiTotal = insRows.reduce((a, t) => a + t.c.pwi, 0);
   const nonRecTotal = insRows.reduce((a, t) => a + t.c.nonRec, 0);
-  const jobValue = contractedTotal - marketing;
+  // ACV credits applied to trades are shown inside the scope (they fund upgrades) and come off the
+  // job value; what is left goes toward the deductible in the out-of-pocket box. Insurance pays the
+  // same money either way, so the applied part is netted out of "insurance pays" too — the
+  // out-of-pocket is identical under both uses; only where it is shown changes.
+  const applied = sfcAppliedTotal();
+  const unapplied = acvCredits - applied;
+  const appliedTrades = rows.filter((x) => x.applied > 0);
+  const jobValue = contractedTotal - marketing - applied;
   // Other job costs: every COGS line that is not labor or materials — a flat share of the job
   // value. The TOTAL row's SFC cost and margin are after it.
   const other = jobValue * (SFC_OTHER_PCT / 100);
   const totalCost = tradeCost + other;
   const netPct = jobValue > 0 ? ((jobValue - totalCost) / jobValue) * 100 : null;
-  const insurancePays = claimACV - deductible + recTotal + pwiTotal;
+  const insurancePays = claimACV - deductible + recTotal + pwiTotal - applied;
   const outOfPocket = jobValue - insurancePays;
   const doneRCV = rows.reduce((a, r) => a + r.c.done, 0);
 
@@ -1911,7 +1963,7 @@ function renderSfcEstimate() {
         <td></td>
         <td class="sub">${acvCredits > 0 ? fmtUSD(acvCredits) : "—"}</td>
         <td class="sub"></td>
-        <td></td>
+        <td class="neg">${applied > 0 ? `(${fmtUSD(applied)})` : ""}</td>
         <td></td><td></td>
       </tr>
       ${marketing > 0 ? `
@@ -1981,6 +2033,7 @@ function renderSfcEstimate() {
           <ul class="scope-list">
             ${scopeRows || `<li class="scope-trade"><span>Nothing contracted</span><span class="scope-amt">—</span></li>`}
             <li class="scope-adj"><span>(+) Upgrades${sfc.upgrades.length ? ` <span class="sfc-muted">${esc(sfc.upgrades.map((u) => u.description || "upgrade").join(", "))}</span>` : ""}</span><span class="scope-amt">${fmtUSD(upgrades)}</span></li>
+            ${appliedTrades.map((x) => `<li class="scope-adj"><span>(−) ACV credit applied to ${esc(sfcServiceName(x.g.trade))}</span><span class="scope-amt">${paren(x.applied)}</span></li>`).join("")}
             <li class="scope-adj"><span>(−) Marketing credits</span><span class="scope-amt">${paren(marketing)}</span></li>
             <li class="scope-total"><span>Total job value</span><span class="scope-amt">${fmtUSD(jobValue)}</span></li>
             <li class="scope-ins"><span>Insurance is paying you</span><span class="scope-amt">${fmtUSD(insurancePays)}</span></li>
@@ -1994,7 +2047,8 @@ function renderSfcEstimate() {
               <tr><td class="left">(+) Deductible</td><td>${fmtUSD(deductible)}</td></tr>
               <tr><td class="left">(+) Upgrades</td><td>${fmtUSD(upgrades)}</td></tr>
               ${nonRecTotal > 0 ? `<tr><td class="left">(+) Non-recoverable depreciation</td><td>${fmtUSD(nonRecTotal)}</td></tr>` : ""}
-              <tr><td class="left">(−) ACV credits</td><td>${paren(acvCredits)}</td></tr>
+              ${applied > 0 ? `<tr><td class="left">(−) ACV credits applied to upgrades</td><td>${paren(applied)}</td></tr>` : ""}
+              <tr><td class="left">(−) ACV credits${applied > 0 ? " toward deductible" : ""}</td><td>${paren(unapplied)}</td></tr>
               ${sfc.marketingCredits.length
                 ? sfc.marketingCredits.map((m) => `<tr><td class="left">(−) ${esc(m.type)} credit</td><td>${paren(Number(m.amount) || 0)}</td></tr>`).join("")
                 : `<tr><td class="left">(−) Marketing credits</td><td>${fmtUSD(0)}</td></tr>`}
@@ -2017,7 +2071,11 @@ function renderSfcEstimate() {
             <td class="left desc">${esc(it.description)}</td>
             <td>${fmtUSD(sfcLineACV(it))}</td>
           </tr>`).join("") : `<tr><td class="left" colspan="3"><span class="sfc-muted">No items credited.</span></td></tr>`}</tbody>
-        <tfoot><tr class="sfc-net"><td class="left" colspan="2">Total ACV credits</td><td>${fmtUSD(acvCredits)}</td></tr></tfoot>
+        <tfoot>
+          <tr class="sfc-net"><td class="left" colspan="2">Total ACV credits</td><td>${fmtUSD(acvCredits)}</td></tr>
+          ${appliedTrades.map((x) => `<tr><td class="left" colspan="2">Applied to ${esc(sfcServiceName(x.g.trade))}</td><td>${paren(x.applied)}</td></tr>`).join("")}
+          ${applied > 0 ? `<tr><td class="left" colspan="2">Toward your deductible</td><td>${fmtUSD(unapplied)}</td></tr>` : ""}
+        </tfoot>
       </table>
     </section>
 
@@ -2032,8 +2090,9 @@ function renderSfcEstimate() {
             <td>${fmtUSD(t.c.acv + t.c.credit)}</td>
           </tr>`).join("")}
           <tr><td class="left">(−) Your deductible</td><td>${paren(deductible)}</td></tr>
+          ${applied > 0 ? `<tr><td class="left">(−) ACV credits applied to your upgrades</td><td>${paren(applied)}</td></tr>` : ""}
         </tbody>
-        <tfoot><tr class="sfc-net"><td class="left">Insurance pays you now</td><td>${fmtUSD(claimACV - deductible)}</td></tr></tfoot>
+        <tfoot><tr class="sfc-net"><td class="left">Insurance pays you now</td><td>${fmtUSD(claimACV - deductible - applied)}</td></tr></tfoot>
       </table>
 
       <p class="section-label sfc-stack-label ins-gap">Second check — recoverable depreciation, paid once the work is complete</p>
@@ -2048,7 +2107,7 @@ function renderSfcEstimate() {
         </tbody>
         <tfoot><tr class="sfc-net"><td class="left">Insurance pays you on completion</td><td>${fmtUSD(recTotal + pwiTotal)}</td></tr></tfoot>
       </table>
-      <p class="ho-fine">Total from insurance: ${fmtUSD(claimACV - deductible)} + ${fmtUSD(recTotal + pwiTotal)} = ${fmtUSD(insurancePays)}. ACV is paid on every line whether or not the work is contracted; recoverable depreciation is paid only on work that is completed.</p>
+      <p class="ho-fine">Total from insurance: ${fmtUSD(claimACV - deductible - applied)} + ${fmtUSD(recTotal + pwiTotal)} = ${fmtUSD(insurancePays)}. ACV is paid on every line whether or not the work is contracted; recoverable depreciation is paid only on work that is completed.</p>
     </section>`;
   sfcBarMode("estimate");
   document.getElementById("sfcModal").querySelector(".modal-body").scrollTop = 0;
