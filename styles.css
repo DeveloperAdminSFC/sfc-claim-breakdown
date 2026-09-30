@@ -468,10 +468,10 @@ body {
 .summary.sfc-payout tfoot td.sub { font-weight: 600; }
 .summary.sfc-payout tbody td.sub:first-of-type, .summary.sfc-payout tfoot td.sub:first-of-type, .summary.sfc-payout thead th.sub:first-of-type { border-left: 1px solid var(--rule); }
 /* ---- Measurements: 5-column form, upgrades table, credit pool ---- */
-.sfc-form-5 th.trade, .sfc-form-5 td.trade { width: 22%; }
-.sfc-form-5 th.rcv, .sfc-form-5 td.rcv { width: 14%; }
-.sfc-form-5 th.meas, .sfc-form-5 td.meas { width: 20%; }
-.sfc-form-5 th.credit, .sfc-form-5 td.credit { width: 17%; }
+.sfc-form-5 th.trade, .sfc-form-5 td.trade { width: 19%; }
+.sfc-form-5 th.rcv, .sfc-form-5 td.rcv { width: 13%; }
+.sfc-form-5 th.meas, .sfc-form-5 td.meas { width: 18%; }
+.sfc-form-5 th.credit, .sfc-form-5 td.credit { width: 16%; }
 .sfc-form-5 .sfc-apply { width: 128px; }
 .sfc-form .sfc-upgrade-note { display: block; font-size: 11.5px; font-weight: 600; color: var(--accent); margin-top: 2px; }
 .sfc-tradenav-credits .sfc-pool { display: block; font-size: 11.5px; color: var(--ink-faint); font-weight: 500; }
@@ -578,12 +578,15 @@ body {
 }
 .summary.sfc-payout.snap td.sub, .summary.sfc-payout.snap td .dash, .summary.sfc-payout.snap td.sub .dash { color: #000; }
 .summary.sfc-payout.snap tbody tr.snap-money td:nth-child(n+3) { border-top: 1.5px solid #000; }
+.summary.sfc-payout.snap tbody td.pos, .summary.sfc-payout.snap tfoot td.pos { color: var(--pos); }
+.summary.sfc-payout.snap tbody td.neg, .summary.sfc-payout.snap tfoot td.neg { color: var(--neg); }
 /* Measure | Bid switch on the measurements screen */
-.sfc-mode { display: inline-flex; border: 1px solid var(--rule-strong); border-radius: 6px; overflow: hidden; margin-right: 8px; vertical-align: middle; }
+.sfc-mode { display: inline-flex; border: 1px solid var(--rule-strong); border-radius: 6px; overflow: hidden; margin-bottom: 6px; vertical-align: middle; }
+.sfc-form td.cost .sfc-mode { display: flex; width: max-content; }
 .sfc-mode-btn { border: 0; background: #fff; color: var(--ink-soft); font: inherit; font-size: 11.5px; font-weight: 700; padding: 0 9px; height: 28px; cursor: pointer; }
 .sfc-mode-btn + .sfc-mode-btn { border-left: 1px solid var(--rule-strong); }
 .sfc-mode-btn[aria-pressed="true"] { background: var(--accent); color: #fff; }
-.sfc-form td.cost { white-space: nowrap; }
+.sfc-form td.cost { white-space: normal; }
 /* Matrix column boxes: payout (ACV+RCV together), contracted, SFC cost, margin */
 .summary.sfc-payout.snap { border-collapse: collapse; }
 .summary.sfc-payout.snap thead tr:first-child th:nth-child(3),
