@@ -1726,7 +1726,7 @@ function renderSfcForm() {
     <div class="sfc-tradenav">
       <button type="button" class="btn btn-nav" id="sfcPrevBtn" aria-label="Back to the last trade">←</button>
       <div class="sfc-tradenav-title"><span class="sfc-step">Measurements &amp; pricing</span><span class="trade-cell">All trades</span></div>
-      <div class="sfc-tradenav-credits">ACV credits <b>${fmtUSD(pool)}</b><span class="sfc-pool" id="sfcPool">applied ${fmtUSD(sfcAppliedTotal())} · toward deductible ${fmtUSD(pool - sfcAppliedTotal())}</span></div>
+      <div class="sfc-tradenav-credits">ACV credits <b>${fmtUSD(pool)}</b><span class="sfc-pool" id="sfcPool">applied ${fmtUSD(sfcAppliedTotal())} · remaining ${fmtUSD(pool - sfcAppliedTotal())}</span></div>
       <span></span>
     </div>
     <div class="sfc-controls">
@@ -1792,7 +1792,7 @@ function renderSfcForm() {
         inp.value = String(Math.max(0, Math.round((Number(inp.value) - over) * 100) / 100));
         total = pool;
       }
-      document.getElementById("sfcPool").textContent = `applied ${fmtUSD(total)} · toward deductible ${fmtUSD(pool - total)}`;
+      document.getElementById("sfcPool").textContent = `applied ${fmtUSD(total)} · remaining ${fmtUSD(pool - total)}`;
     });
   }
   document.getElementById("sfcAddUpgrade").addEventListener("click", () => {
@@ -2048,7 +2048,7 @@ function renderSfcEstimate() {
               <tr><td class="left">(+) Upgrades</td><td>${fmtUSD(upgrades)}</td></tr>
               ${nonRecTotal > 0 ? `<tr><td class="left">(+) Non-recoverable depreciation</td><td>${fmtUSD(nonRecTotal)}</td></tr>` : ""}
               ${applied > 0 ? `<tr><td class="left">(−) ACV credits applied to upgrades</td><td>${paren(applied)}</td></tr>` : ""}
-              <tr><td class="left">(−) ACV credits${applied > 0 ? " toward deductible" : ""}</td><td>${paren(unapplied)}</td></tr>
+              <tr><td class="left">(−) ACV credits</td><td>${paren(unapplied)}</td></tr>
               ${sfc.marketingCredits.length
                 ? sfc.marketingCredits.map((m) => `<tr><td class="left">(−) ${esc(m.type)} credit</td><td>${paren(Number(m.amount) || 0)}</td></tr>`).join("")
                 : `<tr><td class="left">(−) Marketing credits</td><td>${fmtUSD(0)}</td></tr>`}
@@ -2074,7 +2074,7 @@ function renderSfcEstimate() {
         <tfoot>
           <tr class="sfc-net"><td class="left" colspan="2">Total ACV credits</td><td>${fmtUSD(acvCredits)}</td></tr>
           ${appliedTrades.map((x) => `<tr><td class="left" colspan="2">Applied to ${esc(sfcServiceName(x.g.trade))}</td><td>${paren(x.applied)}</td></tr>`).join("")}
-          ${applied > 0 ? `<tr><td class="left" colspan="2">Toward your deductible</td><td>${fmtUSD(unapplied)}</td></tr>` : ""}
+          ${applied > 0 ? `<tr><td class="left" colspan="2">Remaining ACV credits</td><td>${fmtUSD(unapplied)}</td></tr>` : ""}
         </tfoot>
       </table>
     </section>
