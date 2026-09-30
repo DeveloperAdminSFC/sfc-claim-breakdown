@@ -1915,20 +1915,19 @@ function renderSfcEstimate() {
   const recTotal = insRows.reduce((a, t) => a + t.c.rec, 0);               // contracted lines
   const pwiTotal = insRows.reduce((a, t) => a + t.c.pwi, 0);
   const nonRecTotal = insRows.reduce((a, t) => a + t.c.nonRec, 0);
-  // ACV credits applied to trades are shown inside the scope (they fund upgrades) and come off the
-  // job value; what is left goes toward the deductible in the out-of-pocket box. Insurance pays the
-  // same money either way, so the applied part is netted out of "insurance pays" too — the
-  // out-of-pocket is identical under both uses; only where it is shown changes.
+  // ACV credits applied to a trade fund an upgrade; the rest offsets the homeowner's balance. Both
+  // uses are the same insurance money, so neither the job value nor "insurance pays" moves — the
+  // split is shown in the out-of-pocket box (and noted beside the upgrade it funds).
   const applied = sfcAppliedTotal();
   const unapplied = acvCredits - applied;
   const appliedTrades = rows.filter((x) => x.applied > 0);
-  const jobValue = contractedTotal - marketing - applied;
+  const jobValue = contractedTotal - marketing;
   // Other job costs: every COGS line that is not labor or materials — a flat share of the job
   // value. The TOTAL row's SFC cost and margin are after it.
   const other = jobValue * (SFC_OTHER_PCT / 100);
   const totalCost = tradeCost + other;
   const netPct = jobValue > 0 ? ((jobValue - totalCost) / jobValue) * 100 : null;
-  const insurancePays = claimACV - deductible + recTotal + pwiTotal - applied;
+  const insurancePays = claimACV - deductible + recTotal + pwiTotal;
   const outOfPocket = jobValue - insurancePays;
   const doneRCV = rows.reduce((a, r) => a + r.c.done, 0);
 
@@ -1963,7 +1962,7 @@ function renderSfcEstimate() {
         <td></td>
         <td class="sub">${acvCredits > 0 ? fmtUSD(acvCredits) : "—"}</td>
         <td class="sub"></td>
-        <td class="neg">${applied > 0 ? `(${fmtUSD(applied)})` : ""}</td>
+        <td></td>
         <td></td><td></td>
       </tr>
       ${marketing > 0 ? `
@@ -2032,8 +2031,7 @@ function renderSfcEstimate() {
           <p class="section-label sfc-stack-label">Scope of work</p>
           <ul class="scope-list">
             ${scopeRows || `<li class="scope-trade"><span>Nothing contracted</span><span class="scope-amt">—</span></li>`}
-            <li class="scope-adj"><span>(+) Upgrades${sfc.upgrades.length ? ` <span class="sfc-muted">${esc(sfc.upgrades.map((u) => u.description || "upgrade").join(", "))}</span>` : ""}</span><span class="scope-amt">${fmtUSD(upgrades)}</span></li>
-            ${appliedTrades.map((x) => `<li class="scope-adj"><span>(−) ACV credit applied to ${esc(sfcServiceName(x.g.trade))}</span><span class="scope-amt">${paren(x.applied)}</span></li>`).join("")}
+            <li class="scope-adj"><span>(+) Upgrades${sfc.upgrades.length ? ` <span class="sfc-muted">${esc(sfc.upgrades.map((u) => u.description || "upgrade").join(", "))}</span>` : ""}${appliedTrades.map((x) => ` <span class="sfc-muted">· ${fmtUSD(x.applied)} ACV credit applied to ${esc(sfcServiceName(x.g.trade))}</span>`).join("")}</span><span class="scope-amt">${fmtUSD(upgrades)}</span></li>
             <li class="scope-adj"><span>(−) Marketing credits</span><span class="scope-amt">${paren(marketing)}</span></li>
             <li class="scope-total"><span>Total job value</span><span class="scope-amt">${fmtUSD(jobValue)}</span></li>
             <li class="scope-ins"><span>Insurance is paying you</span><span class="scope-amt">${fmtUSD(insurancePays)}</span></li>
@@ -2090,9 +2088,8 @@ function renderSfcEstimate() {
             <td>${fmtUSD(t.c.acv + t.c.credit)}</td>
           </tr>`).join("")}
           <tr><td class="left">(−) Your deductible</td><td>${paren(deductible)}</td></tr>
-          ${applied > 0 ? `<tr><td class="left">(−) ACV credits applied to your upgrades</td><td>${paren(applied)}</td></tr>` : ""}
         </tbody>
-        <tfoot><tr class="sfc-net"><td class="left">Insurance pays you now</td><td>${fmtUSD(claimACV - deductible - applied)}</td></tr></tfoot>
+        <tfoot><tr class="sfc-net"><td class="left">Insurance pays you now</td><td>${fmtUSD(claimACV - deductible)}</td></tr></tfoot>
       </table>
 
       <p class="section-label sfc-stack-label ins-gap">Second check — recoverable depreciation, paid once the work is complete</p>
@@ -2107,7 +2104,7 @@ function renderSfcEstimate() {
         </tbody>
         <tfoot><tr class="sfc-net"><td class="left">Insurance pays you on completion</td><td>${fmtUSD(recTotal + pwiTotal)}</td></tr></tfoot>
       </table>
-      <p class="ho-fine">Total from insurance: ${fmtUSD(claimACV - deductible - applied)} + ${fmtUSD(recTotal + pwiTotal)} = ${fmtUSD(insurancePays)}. ACV is paid on every line whether or not the work is contracted; recoverable depreciation is paid only on work that is completed.</p>
+      <p class="ho-fine">Total from insurance: ${fmtUSD(claimACV - deductible)} + ${fmtUSD(recTotal + pwiTotal)} = ${fmtUSD(insurancePays)}. ACV is paid on every line whether or not the work is contracted; recoverable depreciation is paid only on work that is completed.</p>
     </section>`;
   sfcBarMode("estimate");
   document.getElementById("sfcModal").querySelector(".modal-body").scrollTop = 0;
