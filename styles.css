@@ -653,6 +653,18 @@ body.sfc-open { overflow: hidden; }
 .sfc-credits td.lineno { color: var(--ink-faint); white-space: nowrap; width: 60px; }
 @media (max-width: 900px) { .alloc-grid { grid-template-columns: 1fr; } }
 @media print { #sfcModal .modal-panel.sfc-panel { position: static; height: auto; } }
+/* SFC working screens (trades, pricing, ACV credits): one centered wide column; the nav bar and
+   the content share the same width. The estimate keeps the 8.5in paper width. */
+#sfcBody.sfc-work { max-width: 1240px; margin: 0 auto; }
+#sfcBody.sfc-work .sfc-tradenav { margin: 0 0 16px; border-radius: 0 0 10px 10px; }
+#sfcBody.sfc-work .sfc-tradenav-title .trade-cell { font-size: 18px; }
+.alloc-grid { grid-template-columns: 360px minmax(0, 1fr); }
+.alloc-table { width: 100%; table-layout: fixed; }
+.alloc-table thead th { white-space: nowrap; font-size: 10.5px; }
+.alloc-table th:nth-child(1) { width: 30%; } .alloc-table th:nth-child(2) { width: 14%; } .alloc-table th:nth-child(3) { width: 18%; }
+.alloc-table th:nth-child(4) { width: 15%; } .alloc-table th:nth-child(5) { width: 12%; } .alloc-table th:nth-child(6) { width: 11%; }
+.alloc-table td.left.trade .snap-sub { white-space: normal; }
+.alloc-table td.alloc-in .input { width: 100%; max-width: 150px; }
 /* ---- Job price stack on the estimate ---- */
 .sfc-stack-label { margin-top: 6px; }
 .summary.sfc-payout + .sfc-stack-label { margin-top: 34px; }

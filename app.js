@@ -1574,6 +1574,7 @@ function renderSfcStep() {
   const n = sfcTradeGroups().length;
   sfc.step = Math.max(0, Math.min(sfc.step, n + 2));
   document.getElementById("sfcModal").querySelector(".modal-body").scrollTop = 0;
+  document.getElementById("sfcBody").classList.toggle("sfc-work", sfc.step < n + 2);
   if (sfc.step < n) { sfcBarMode("trade"); renderSfcTrade(sfcTradeGroups()[sfc.step], sfc.step, n); }
   else if (sfc.step === n) { sfcBarMode("pricing"); renderSfcPricing(); }
   else if (sfc.step === n + 1) { sfcBarMode("allocate"); renderSfcAllocate(); }
@@ -1852,7 +1853,7 @@ function renderSfcAllocate() {
       <div class="alloc-trades">
         <p class="section-label">Contracted trades</p>
         <table class="summary sfc-est alloc-table">
-          <thead><tr><th class="left">Trade</th><th>RCV + upgrades</th><th>Add from ACV credits</th><th>Contracted Amount</th><th>SFC Cost</th><th>% Profit Margin</th></tr></thead>
+          <thead><tr><th class="left">Trade</th><th>RCV + Upgrades</th><th>Add from ACV Credits</th><th>Contracted Amount</th><th>SFC Cost</th><th>Margin</th></tr></thead>
           <tbody>${tradeRows}</tbody>
           <tfoot><tr class="sfc-net">
             <td class="left">TOTAL <span class="sfc-muted">after ${SFC_OTHER_PCT}% other job costs</span></td>
@@ -1960,7 +1961,8 @@ function renderSfcEstimate() {
   // Page 2 — preliminary pricing: scope (left) + out-of-pocket (right) + signatures.
   const scopeRows = rows
     .filter((x) => x.rcv > 0 || x.ups.length || x.realloc > 0)
-    .map((x) => `<li class="scope-trade"><span>${esc(sfcServiceName(x.g.trade))}</span><span class="scope-amt">${x.rcv + x.realloc > 0 ? fmtUSD(x.rcv + x.realloc) : "—"}</span></li>`)
+    .map((x) => `<li class="scope-trade"><span>${esc(sfcServiceName(x.g.trade))}</span><span class="scope-amt">${x.rcv + x.realloc > 0 ? fmtUSD(x.rcv + x.realloc) : "—"}</span></li>` +
+      x.ups.map((u) => `<li class="scope-up"><span>${esc(u.description || "Upgrade")}</span><span class="scope-amt">+${fmtUSD(u.price)}</span></li>`).join(""))
     .join("");
   const pricingPage = `
     <section class="page sfc-homeowner">
@@ -1970,7 +1972,6 @@ function renderSfcEstimate() {
           <p class="section-label sfc-stack-label">Scope of work</p>
           <ul class="scope-list">
             ${scopeRows || `<li class="scope-trade"><span>Nothing contracted</span><span class="scope-amt">—</span></li>`}
-            <li class="scope-adj"><span>(+) Upgrades${sfc.upgrades.length ? ` <span class="sfc-muted">${esc(sfc.upgrades.map((u) => u.description || "upgrade").join(", "))}</span>` : ""}</span><span class="scope-amt">${fmtUSD(m.upgrades)}</span></li>
             <li class="scope-adj"><span>(−) Marketing credits</span><span class="scope-amt">${paren(m.marketing)}</span></li>
             <li class="scope-total"><span>Total job value</span><span class="scope-amt">${fmtUSD(m.jobValue)}</span></li>
           </ul>
