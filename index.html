@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Claim Breakdown by Trade</title>
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=20261001" />
 </head>
 <body>
   <!-- ===================== CONTROL BAR (screen only) ===================== -->
@@ -109,11 +109,11 @@
   <!-- ============ SFC ESTIMATE MODAL (measurements → SFC pricing vs insurance) ============ -->
   <div id="sfcModal" class="modal" hidden>
     <div class="modal-backdrop" id="sfcBackdrop"></div>
-    <div class="modal-panel" role="dialog" aria-modal="true" aria-label="SFC estimate">
+    <div class="modal-panel sfc-panel" role="dialog" aria-modal="true" aria-label="SFC estimate">
       <header class="modal-bar">
         <span class="modal-title">SFC Estimate</span>
+        <nav id="sfcSteps" class="sfc-steps" aria-label="Steps"></nav>
         <div class="modal-bar-actions">
-          <button id="sfcBackBtn" class="btn" hidden>← Measurements</button>
           <button id="sfcUomBtn" class="btn" hidden aria-pressed="false" title="Show every dollar figure per unit of measure">Per UOM</button>
           <button id="sfcPrintBtn" class="btn btn-primary" hidden>Download estimate (PDF)</button>
           <button id="sfcCloseBtn" class="btn btn-icon" aria-label="Close estimate">✕</button>
@@ -145,6 +145,6 @@
     </div>
   </div>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=20261001"></script>
 </body>
 </html>

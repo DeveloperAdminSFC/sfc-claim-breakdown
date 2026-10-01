@@ -617,6 +617,42 @@ body {
 .summary.sfc-payout.snap thead th.sub { border-bottom: 2px solid #000; }
 /* the old sub-column hairline is replaced by the box lines */
 .summary.sfc-payout.snap tbody td.sub:first-of-type, .summary.sfc-payout.snap tfoot td.sub:first-of-type, .summary.sfc-payout.snap thead th.sub:first-of-type { border-left-color: #000; }
+/* ---- SFC Estimate: full screen, step bar, allocation screen ---- */
+#sfcModal .modal-backdrop { display: none; }
+#sfcModal .modal-panel.sfc-panel { position: fixed; inset: 0; width: 100vw; max-width: none; height: 100vh; max-height: none; border-radius: 0; box-shadow: none; }
+#sfcModal .modal-bar { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 24px; }
+body.sfc-open { overflow: hidden; }
+.sfc-steps { display: flex; align-items: center; justify-content: center; gap: 6px; flex-wrap: wrap; }
+.sfc-stepbtn { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--rule-strong); background: #fff; color: var(--ink-soft); border-radius: 999px; padding: 6px 14px 6px 6px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.sfc-stepbtn .n { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; background: var(--wash); color: var(--ink-soft); font-size: 12px; font-weight: 700; }
+.sfc-stepbtn.done { color: var(--ink); }
+.sfc-stepbtn.done .n { background: var(--pos); color: #fff; }
+.sfc-stepbtn.current { border-color: var(--accent); color: var(--accent); }
+.sfc-stepbtn.current .n { background: var(--accent); color: #fff; }
+.sfc-stepbtn[disabled] { opacity: 0.45; cursor: default; }
+.sfc-stepsep { color: var(--ink-faint); }
+.sfc-tradenav { grid-template-columns: auto 1fr auto auto auto; }
+.alloc-grid { display: grid; grid-template-columns: 340px 1fr; gap: 28px; align-items: start; }
+.alloc-pool { background: var(--wash); border-radius: 10px; padding: 16px 18px; }
+.alloc-pool-trade { padding: 8px 0 10px; border-bottom: 1px solid var(--rule); }
+.alloc-pool-head { display: flex; justify-content: space-between; align-items: center; font-size: 14px; }
+.alloc-pool-head .trade-cell { font-weight: 700; }
+.alloc-pool-line { display: flex; justify-content: space-between; gap: 12px; font-size: 12.5px; color: var(--ink-soft); padding: 3px 0 3px 17px; }
+.alloc-pool-total, .alloc-pool-split { display: flex; justify-content: space-between; font-size: 14px; padding: 8px 0 0; }
+.alloc-pool-total { margin-top: 8px; font-weight: 800; font-size: 16px; color: #000; }
+.alloc-pool-split b { color: var(--ink); }
+.alloc-table { font-size: 15px; }
+.alloc-table thead th { white-space: normal; text-align: center; }
+.alloc-table thead th.left { text-align: left; }
+.alloc-table td { text-align: center; }
+.alloc-table td.left { text-align: left; }
+.alloc-table td.alloc-in .input { width: 130px; height: 40px; font-size: 16px; font-weight: 700; text-align: right; }
+.alloc-table td.alloc-contracted { font-weight: 800; }
+.alloc-table td.pos, .alloc-table tfoot td.pos { color: var(--pos); }
+.alloc-table td.neg, .alloc-table tfoot td.neg { color: var(--neg); }
+.sfc-credits td.lineno { color: var(--ink-faint); white-space: nowrap; width: 60px; }
+@media (max-width: 900px) { .alloc-grid { grid-template-columns: 1fr; } }
+@media print { #sfcModal .modal-panel.sfc-panel { position: static; height: auto; } }
 /* ---- Job price stack on the estimate ---- */
 .sfc-stack-label { margin-top: 6px; }
 .summary.sfc-payout + .sfc-stack-label { margin-top: 34px; }
