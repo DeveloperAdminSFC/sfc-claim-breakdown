@@ -1962,7 +1962,7 @@ function renderSfcEstimate() {
   const scopeRows = rows
     .filter((x) => x.rcv > 0 || x.ups.length || x.realloc > 0)
     .map((x) => `<li class="scope-trade"><span>${esc(sfcServiceName(x.g.trade))}</span><span class="scope-amt">${fmtUSD(x.contracted)}</span></li>` +
-      (x.rcv > 0 ? `<li class="scope-up"><span>(+) Insurance Contracted</span><span class="scope-amt">${fmtUSD(x.rcv)}</span></li>` : "") +
+      (x.rcv > 0 ? `<li class="scope-up"><span>(+) Insurance RCV</span><span class="scope-amt">${fmtUSD(x.rcv)}</span></li>` : "") +
       (x.realloc > 0 ? `<li class="scope-up"><span>(+) ACV Credits Applied</span><span class="scope-amt">${fmtUSD(x.realloc)}</span></li>` : "") +
       x.ups.map((u) => `<li class="scope-up"><span>(+) ${esc(u.description || "Upgrade")}</span><span class="scope-amt">${fmtUSD(u.price)}</span></li>`).join(""))
     .join("");
