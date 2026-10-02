@@ -602,6 +602,36 @@ function reconcileSummary() {
   return { ok: rows.every((r) => r.match), rows };
 }
 
+// "Fix Discrepancy": add ONE price adjustment line sized to exactly what the reconcile check
+// found, so the sheet matches the claim's own summary. Each bucket gets (claim − line items) for
+// the rows the claim states; when the claim's ACV still differs from RCV minus those buckets, the
+// ACV is set directly (typed ACV, no equation). Returns the line, or null when nothing is off.
+function fixDiscrepancy() {
+  const { rows } = reconcileSummary();
+  const gap = (label) => {
+    const r = rows.find((x) => x.label === label);
+    return r && r.comparable ? Math.round((Number(r.claim) - r.lineItems) * 100) / 100 : 0;
+  };
+  const rcv = gap("RCV");
+  const recoverableDep = gap("Recoverable Dep.");
+  const nonRecoverableDep = gap("Non-Recoverable Dep.");
+  const rps = gap("RPS Customer Portion");
+  const acvRow = rows.find((x) => x.label === "ACV");
+  const acvGap = gap("ACV");
+  if (![rcv, recoverableDep, nonRecoverableDep, rps, acvGap].some((v) => Math.abs(v) > 0.005)) return null;
+  const n = state.items.filter((it) => it.isAdjustment && String(it.number).startsWith("ADJ")).length;
+  const line = newAdjustmentLine({
+    description: "Price adjustment (match claim summary)",
+    number: n ? `ADJ${n + 1}` : "ADJ",
+    rcv, recoverableDep, nonRecoverableDep, rps,
+  });
+  const formula = rcv - recoverableDep - nonRecoverableDep - rps;
+  if (acvRow && acvRow.comparable && Math.abs(acvGap - formula) > 0.005) line.acvManual = acvGap;
+  line.acv = itemACV(line);
+  state.items.push(line);
+  return line;
+}
+
 function showDiscrepancyModal(rows) {
   const body = document.getElementById("discBody");
   body.innerHTML = rows
@@ -1223,16 +1253,18 @@ function renderDoc() {
   // Header block, 3 rows × 2 columns. Left: who/when. Right: what the insurance pays, computed
   // from THIS sheet's own totals (the Total row of the claim-wide table) so the header always
   // ties to the table beneath it:
-  //   Total Insurance Pays Homeowner = RCV − Non-Recoverable Dep. − RPS customer portion − Deductible − Paid When Incurred
+  //   Total Insurance Pays Homeowner = ACV + Recoverable Dep. − Deductible
+  //     (= RCV − Non-Recoverable Dep. − RPS customer portion − Paid When Incurred − Deductible while
+  //      every line follows the formula; ACV-based so a typed ACV on an adjustment line counts)
   //   1st Payment (ACV check)        = ACV − Deductible
   // where ACV already nets PWI and both depreciation buckets (same formula everywhere).
   // Deductible is the claim's stated deductible (0 when the parser did not find one).
   const claimTotals = groupByTrade(items).reduce(
-    (a, g) => { a.rcv += g.rcv; a.nonRecDep += g.nonRecDep; a.pwi += g.pwi; a.rps += g.rps || 0; a.acv += g.acv; return a; },
-    { rcv: 0, nonRecDep: 0, pwi: 0, rps: 0, acv: 0 }
+    (a, g) => { a.rcv += g.rcv; a.recDep += g.recDep; a.nonRecDep += g.nonRecDep; a.pwi += g.pwi; a.rps += g.rps || 0; a.acv += g.acv; return a; },
+    { rcv: 0, recDep: 0, nonRecDep: 0, pwi: 0, rps: 0, acv: 0 }
   );
   const deductible = md.deductible != null ? Number(md.deductible) || 0 : 0;
-  const insurancePays = claimTotals.rcv - claimTotals.nonRecDep - claimTotals.rps - deductible - claimTotals.pwi;
+  const insurancePays = claimTotals.acv + claimTotals.recDep - deductible;
   const firstPayment = claimTotals.acv - deductible;
   // Rendered row-major into a 2-column grid: [left, right] per row.
   const metaRows = [
@@ -2018,15 +2050,15 @@ function claimSummaryPageHTML(deductibleOverride) {
   const md = state.summary || {};
   const job = state.jobInfo;
   const totals = groupByTrade(items).reduce(
-    (a, g) => { a.rcv += g.rcv; a.nonRecDep += g.nonRecDep; a.pwi += g.pwi; a.rps += g.rps || 0; a.acv += g.acv; return a; },
-    { rcv: 0, nonRecDep: 0, pwi: 0, rps: 0, acv: 0 }
+    (a, g) => { a.rcv += g.rcv; a.recDep += g.recDep; a.nonRecDep += g.nonRecDep; a.pwi += g.pwi; a.rps += g.rps || 0; a.acv += g.acv; return a; },
+    { rcv: 0, recDep: 0, nonRecDep: 0, pwi: 0, rps: 0, acv: 0 }
   );
   const ded = deductibleOverride != null ? deductibleOverride : md.deductible != null ? Number(md.deductible) || 0 : null;
   const metaRows = [
     ["Job #", job && job.job_number != null ? String(job.job_number) : "—"],
     ["Deductible", ded != null ? fmtUSD(ded) : "—"],
     ["Client Name", sfc.client || (job && job.contact_name) || "—"],
-    ["Total Insurance Pays Homeowner", fmtUSD(totals.rcv - totals.nonRecDep - totals.rps - (ded || 0) - totals.pwi)],
+    ["Total Insurance Pays Homeowner", fmtUSD(totals.acv + totals.recDep - (ded || 0))],
     ["Date Printed", new Date().toLocaleDateString("en-US")],
     ["1st Payment (ACV − Deductible)", fmtUSD(totals.acv - (ded || 0))],
   ];
@@ -2343,9 +2375,18 @@ function init() {
   document.getElementById("modalBackdrop").addEventListener("click", closeSummaryModal);
 
   // Discrepancy modal: "Fix Discrepancy" returns to the review table; "Build Anyway" builds as-is.
+  // Fix Discrepancy: add the price adjustment line that closes the gap, then build.
   document.getElementById("fixDiscBtn").addEventListener("click", () => {
     closeDiscrepancyModal();
-    document.getElementById("review").scrollIntoView({ behavior: "smooth", block: "start" });
+    const line = fixDiscrepancy();
+    renderReview();
+    if (line) {
+      setStatus(
+        `Added "${line.description}" (line ${line.displayNumber}, PRICE ADJUSTMENT trade): RCV ${fmtUSD(line.rcv)}, ACV ${fmtUSD(itemACV(line))}. The sheet now matches the claim summary — edit or remove the line at the bottom of the table.`,
+        "ok"
+      );
+    }
+    renderDoc();
   });
   document.getElementById("buildAnywayBtn").addEventListener("click", () => {
     closeDiscrepancyModal();
