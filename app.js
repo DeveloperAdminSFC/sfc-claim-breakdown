@@ -40,9 +40,9 @@ const TRADE_ORDER = [
   "FENCE",
   "GARAGE",
   "MISC",
-  // Summary-only sales tax / O&P (and their depreciation) that no line item carries — see
-  // summaryAdjustmentLine. This tool's copy only.
-  "SALES TAX",
+  // Adjustment lines: miscalculated or summary-only values (sales tax, O&P, depreciation taken on
+  // them, anything needed to make the sheet match the claim). This tool's copy only.
+  "PRICE ADJUSTMENT",
   // Contents / personal-property lines (bird bath, grill, patio furniture, …). This tool's copy
   // only — NOT present in the OI platform's canonical TRADE_OPTIONS.
   "PERSONAL PROPERTY",
@@ -61,7 +61,7 @@ const TRADE_COLORS = {
   FENCE: "#f97316",
   GARAGE: "#6366f1",
   MISC: "#64748b",
-  "SALES TAX": "#0f766e",
+  "PRICE ADJUSTMENT": "#0f766e",
   "PERSONAL PROPERTY": "#d946ef", // fuchsia — distinct from the 11 above
   "Not Trade Related": "#94a3b8",
   "Not Categorized": "#cbd5e1",
@@ -487,14 +487,14 @@ function summaryAdjustmentLine(parsed, items) {
   const rps = resid(s.totalCustomerPortionRPS, "rps");
   return newAdjustmentLine({
     description: (Number(s.totalOP) || 0) > 0 ? "Overhead & profit and sales tax (claim summary)" : "Material sales tax (claim summary)",
-    number: "TAX", trade: "SALES TAX",
+    number: "TAX", trade: "PRICE ADJUSTMENT",
     rcv, recoverableDep, nonRecoverableDep, rps,
   });
 }
 // A blank or prefilled adjustment line: every amount is editable, the description is editable,
-// and ACV can be typed directly. The auto tax line lands in SALES TAX; a hand-added price
-// adjustment starts uncategorized like any other line.
-function newAdjustmentLine({ description = "Price adjustment", number = "ADJ", trade = "Not Categorized", rcv = 0, recoverableDep = 0, nonRecoverableDep = 0, rps = 0 } = {}) {
+// and ACV can be typed directly. Every adjustment line — the auto claim-summary tax line and a
+// hand-added one — starts in the PRICE ADJUSTMENT trade; the dropdown can move it to any trade.
+function newAdjustmentLine({ description = "Price adjustment", number = "ADJ", trade = "PRICE ADJUSTMENT", rcv = 0, recoverableDep = 0, nonRecoverableDep = 0, rps = 0 } = {}) {
   return {
     number, displayNumber: number, section: "", description, quantity: "",
     rcv, op: 0, tax: 0, recoverableDep, nonRecoverableDep, rps, paidWhenIncurred: 0,
@@ -1433,7 +1433,7 @@ const SFC_OTHER_PCT = 21;
 const SFC_TRADE_SERVICE = {
   ROOF: "Roofing Services", GUTTERS: "Gutter Services", SIDING: "Siding Services", WINDOWS: "Window Services",
   PAINT: "Painting Services", SOLAR: "Solar Services", FENCE: "Fence Services", GARAGE: "Garage Services",
-  MISC: "Miscellaneous", "PERSONAL PROPERTY": "Personal Property", "SALES TAX": "Sales Tax",
+  MISC: "Miscellaneous", "PERSONAL PROPERTY": "Personal Property", "PRICE ADJUSTMENT": "Price Adjustment",
 };
 const sfcServiceName = (t) =>
   SFC_TRADE_SERVICE[t] || `${String(t).toLowerCase().replace(/\b\w/g, (ch) => ch.toUpperCase())} Services`;
