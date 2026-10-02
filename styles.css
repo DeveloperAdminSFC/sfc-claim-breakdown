@@ -1014,3 +1014,42 @@ body.sfc-open { overflow: hidden; }
 .ded-field .input { width: 120px; text-align: right; font-variant-numeric: tabular-nums; }
 .ded-field.missing { color: #9a5b00; }
 .ded-field.missing .input { border-color: #f59e0b; background: #fffbeb; }
+
+/* ============================ PRINT: SFC ESTIMATE ============================ */
+/* The estimate pages are free-flowing (not measured like the claim-summary trade pages), so on
+   paper they are set tighter and given clean break rules: every page starts a new sheet, a
+   table that must run onto another sheet does NOT reprint its header or total rows, no row is
+   split, a small table stays whole with its heading, and a closing note never lands alone. */
+@media print {
+  body.sfc-open { overflow: visible !important; }
+  #sfcBody > section.page:first-child { margin-top: 0; }
+  #sfcBody .doc-head { margin-bottom: 14px; padding-bottom: 10px; }
+  #sfcBody .sfc-title { font-size: 24px; }
+  #sfcBody .section-label { margin-bottom: 6px; }
+  #sfcBody .summary.sfc-est { font-size: 12.5px; }
+  #sfcBody .summary.sfc-est thead th { padding: 5px 8px; }
+  #sfcBody .summary.sfc-est tbody td, #sfcBody .summary.sfc-est tfoot td { padding: 6px 8px; }
+  #sfcBody .summary.sfc-est tfoot td { font-size: 13.5px; }
+  #sfcBody .summary.sfc-est tr.sfc-net td { padding-top: 9px; padding-bottom: 9px; font-size: 14px; }
+  #sfcBody .scope-list { font-size: 12.5px; }
+  #sfcBody .scope-list li { padding: 5px 0; }
+  #sfcBody .scope-list li.scope-total { font-size: 14px; padding-top: 9px; }
+  #sfcBody .ho-grid { margin-top: 12px; gap: 24px; }
+  #sfcBody .ho-sign { margin-top: 40px; }
+  #sfcBody .ins-gap, #sfcBody .sfc-stack-label { margin-top: 16px; }
+  #sfcBody .ho-fine { margin-top: 14px; }
+  #sfcBody .meta-grid { margin: 10px 0 16px; }
+
+  /* A table running onto another sheet does not reprint its header / total rows. */
+  #sfcBody table thead, #doc table thead { display: table-row-group; }
+  #sfcBody table tfoot, #doc table tfoot { display: table-row-group; }
+  /* Never split a row, a scope line or a signature block. */
+  #sfcBody tr, #sfcBody .scope-list li, #sfcBody .ho-sig, #sfcBody .alloc-pool-line { break-inside: avoid; page-break-inside: avoid; }
+  /* Headings stay with what follows; totals and closing notes stay with what precedes. */
+  #sfcBody .section-label, #sfcBody .doc-head { break-after: avoid; page-break-after: avoid; }
+  #sfcBody tfoot tr, #sfcBody .ho-fine { break-before: avoid; page-break-before: avoid; }
+  /* Small tables and the signature block stay whole. */
+  #sfcBody .ins-table, #sfcBody .sfc-stack, #sfcBody .ho-table, #sfcBody .ho-sign, #sfcBody .snap, #sfcBody .ho-grid {
+    break-inside: avoid; page-break-inside: avoid;
+  }
+}
