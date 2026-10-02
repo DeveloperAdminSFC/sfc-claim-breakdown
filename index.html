@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Claim Breakdown by Trade</title>
-  <link rel="stylesheet" href="styles.css?v=20261001e" />
+  <link rel="stylesheet" href="styles.css?v=20261002a" />
 </head>
 <body>
   <!-- ===================== CONTROL BAR (screen only) ===================== -->
@@ -43,6 +43,7 @@
         <select id="bulkTradeSelect" class="input input-select" title="Trade to apply"></select>
         <select id="bulkStructureSelect" class="input input-select" title="Structure to apply"></select>
         <button id="applyLinesBtn" class="btn">Apply to lines</button>
+        <button id="addAdjBtn" class="btn btn-ghost" title="Add an editable line for summary-only sales tax / O&P and the depreciation taken on it">＋ Tax / adjustment line</button>
         <button id="buildBtn" class="btn btn-primary">Build summary ↓</button>
         <button id="sfcBtn" class="btn btn-sfc" title="Price the claim's trades with SFC's live cost history">Build SFC Estimate</button>
       </div>
@@ -58,6 +59,7 @@
             <th class="edit-col">Paid When Incurred</th>
             <th class="edit-col">Recoverable Dep.</th>
             <th class="edit-col">Non-Rec. Dep.</th>
+            <th class="edit-col" title="Roof payment schedule: the part of the line insurance will never pay">RPS Cust. Portion</th>
             <th>ACV</th>
             <th class="left">Trade</th>
             <th class="left">Structure</th>
@@ -145,6 +147,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=20261001e"></script>
+  <script src="app.js?v=20261002a"></script>
 </body>
 </html>

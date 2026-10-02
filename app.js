@@ -40,6 +40,9 @@ const TRADE_ORDER = [
   "FENCE",
   "GARAGE",
   "MISC",
+  // Summary-only sales tax / O&P (and their depreciation) that no line item carries — see
+  // summaryAdjustmentLine. This tool's copy only.
+  "SALES TAX",
   // Contents / personal-property lines (bird bath, grill, patio furniture, …). This tool's copy
   // only — NOT present in the OI platform's canonical TRADE_OPTIONS.
   "PERSONAL PROPERTY",
@@ -58,6 +61,7 @@ const TRADE_COLORS = {
   FENCE: "#f97316",
   GARAGE: "#6366f1",
   MISC: "#64748b",
+  "SALES TAX": "#0f766e",
   "PERSONAL PROPERTY": "#d946ef", // fuchsia — distinct from the 11 above
   "Not Trade Related": "#94a3b8",
   "Not Categorized": "#cbd5e1",
@@ -294,15 +298,23 @@ async function parsePdf(file) {
         tax: Number(it.tax) || 0,
         recoverableDep,
         nonRecoverableDep,
+        // Roof payment schedule (RPS) customer portion: what the insurer will never pay on this
+        // line because the policy pays the roof by a schedule. NOT depreciation — its own
+        // bucket, editable, and it comes out of ACV like the others.
+        rps: Math.max(0, Number(it.rpsCustomerPortion) || 0),
         // Struck-through in the source = paid when incurred (carved out of ACV). The parser
         // sends the carve-out AMOUNT (the struck line's RCV); 0 for normal lines. Editable.
         paidWhenIncurred: Number(it.paidWhenIncurred) || 0,
-        acv: rcv - (Number(it.paidWhenIncurred) || 0) - recoverableDep - nonRecoverableDep,
+        acv: rcv - (Number(it.paidWhenIncurred) || 0) - recoverableDep - nonRecoverableDep - Math.max(0, Number(it.rpsCustomerPortion) || 0),
         trade: "Not Categorized", // every line starts uncategorized
       };
     });
     if (!items.length) throw new Error("No line items found in this PDF.");
     assignDisplayNumbers(items); // stamp displayNumber (C1… for later sections)
+    // Summary-only sales tax / O&P and the depreciation the carrier takes on it at the recap
+    // level sit on no line item; carry them as one editable line so every total ties.
+    const adj = summaryAdjustmentLine(parsed, items);
+    if (adj) items.push(adj);
 
     // Mutate in place — do NOT reassign `state`, which would drop state.jobInfo
     // (the linked Job #) and blank the summary's Job #/Client rows.
@@ -448,9 +460,49 @@ function deleteStructure(id) {
   );
 }
 
+// The claim-summary adjustment line. Many carriers (Allstate, USAA) add Material Sales Tax
+// (and sometimes Overhead & Profit) only in the summary, then depreciate it — or apply the roof
+// payment schedule to it — at the recap level. None of that is on a line item, so the line sums
+// never reach the carrier's RCV / depreciation / ACV. This builds ONE editable line holding:
+//   RCV                 = summary O&P + sales tax (only when the parser found them excluded
+//                         from line RCV)
+//   Recoverable / Non-Rec = stated total − Σ line depreciation   (the tax depreciation)
+//   RPS customer portion  = stated customer portion − Σ line portions
+// Each residual is used only when it is positive and no larger than the tax itself — a bigger
+// gap is a parsing problem to look at, not tax. Returns null when there is nothing to carry.
+function summaryAdjustmentLine(parsed, items) {
+  const s = (parsed && parsed.summary) || {};
+  if (!parsed || parsed.opTaxIncludedSuggested !== false) return null;
+  const rcv = Math.round(((Number(s.totalOP) || 0) + (Number(s.totalTax) || 0)) * 100) / 100;
+  if (!(rcv > 0)) return null;
+  const sum = (f) => items.reduce((a, it) => a + (Number(it[f]) || 0), 0);
+  const resid = (stated, f) => {
+    if (stated == null) return 0;
+    const v = Math.round((Number(stated) - sum(f)) * 100) / 100;
+    return v > 0.005 && v <= rcv ? v : 0;
+  };
+  const undetermined = !!parsed.nonRecoverableSplitUndetermined;
+  const recoverableDep = undetermined ? 0 : resid(s.totalRecoverableDepreciation, "recoverableDep");
+  const nonRecoverableDep = undetermined ? 0 : resid(s.totalNonRecoverableDepreciation, "nonRecoverableDep");
+  const rps = resid(s.totalCustomerPortionRPS, "rps");
+  return newAdjustmentLine({
+    description: (Number(s.totalOP) || 0) > 0 ? "Overhead & profit and sales tax (claim summary)" : "Material sales tax (claim summary)",
+    rcv, recoverableDep, nonRecoverableDep, rps,
+  });
+}
+// A blank or prefilled adjustment line. Lives in the SALES TAX trade; every amount is editable.
+function newAdjustmentLine({ description = "Sales tax / adjustment (claim summary)", rcv = 0, recoverableDep = 0, nonRecoverableDep = 0, rps = 0 } = {}) {
+  return {
+    number: "TAX", displayNumber: "TAX", section: "", description, quantity: "",
+    rcv, op: 0, tax: 0, recoverableDep, nonRecoverableDep, rps, paidWhenIncurred: 0,
+    acv: rcv - recoverableDep - nonRecoverableDep - rps,
+    trade: "SALES TAX", isAdjustment: true,
+  };
+}
+
 // Recompute a row's ACV cell live. ACV is the one computed cell and always:
-//   ACV = RCV − Paid When Incurred − Recoverable Dep − Non-Recoverable Dep.
-// All four inputs feed it, so editing any of them (or moving a value between buckets)
+//   ACV = RCV − Paid When Incurred − Recoverable Dep − Non-Recoverable Dep − RPS customer portion.
+// All five inputs feed it, so editing any of them (or moving a value between buckets)
 // just follows this single formula — no special cases.
 function refreshAcvCell(i) {
   const it = state.items[i];
@@ -458,7 +510,8 @@ function refreshAcvCell(i) {
     (Number(it.rcv) || 0) -
     (Number(it.paidWhenIncurred) || 0) -
     (Number(it.recoverableDep) || 0) -
-    (Number(it.nonRecoverableDep) || 0);
+    (Number(it.nonRecoverableDep) || 0) -
+    (Number(it.rps) || 0);
   const cell = document.querySelector(`.acv-cell[data-i="${i}"]`);
   if (cell) cell.textContent = fmtUSD(it.acv);
 }
@@ -505,12 +558,17 @@ function reconcileSummary() {
   const sumRecov = items.reduce((a, it) => a + (Number(it.recoverableDep) || 0), 0);
   const sumNonRec = items.reduce((a, it) => a + (Number(it.nonRecoverableDep) || 0), 0);
   const sumPWI = items.reduce((a, it) => a + (Number(it.paidWhenIncurred) || 0), 0);
-  const acvLineItems = sumRCV - sumPWI - sumRecov - sumNonRec;
+  const sumRps = items.reduce((a, it) => a + (Number(it.rps) || 0), 0);
+  const acvLineItems = sumRCV - sumPWI - sumRecov - sumNonRec - sumRps;
 
   const defs = [
     { label: "RCV", lineItems: sumRCV, claim: s.totalRCV },
     { label: "Recoverable Dep.", lineItems: sumRecov, claim: s.totalRecoverableDepreciation },
     { label: "Non-Recoverable Dep.", lineItems: sumNonRec, claim: s.totalNonRecoverableDepreciation },
+    // Roof payment schedule: only compared when the claim states a customer portion.
+    ...(s.totalCustomerPortionRPS != null || sumRps > 0
+      ? [{ label: "RPS Customer Portion", lineItems: sumRps, claim: s.totalCustomerPortionRPS }]
+      : []),
     { label: "ACV", lineItems: acvLineItems, claim: s.totalACV },
   ];
   const rows = defs.map((d) => {
@@ -731,6 +789,7 @@ function renderReview() {
         <td class="edit-col">${moneyInput("pwi-in", i, it.paidWhenIncurred)}</td>
         <td class="edit-col">${moneyInput("rec-in", i, it.recoverableDep)}</td>
         <td class="edit-col">${moneyInput("nonrec-in", i, it.nonRecoverableDep)}</td>
+        <td class="edit-col">${moneyInput("rps-in", i, it.rps)}</td>
         <td class="acv-cell" data-i="${i}">${fmtUSD(it.acv)}</td>
         <td class="left">${tradeSelectHTML(it.trade, `data-i="${i}"`)}</td>
         <td class="left">${structureSelectHTML(it.structureId, `data-i="${i}"`)}</td>
@@ -779,6 +838,13 @@ function renderReview() {
     el.addEventListener("input", (e) => {
       const i = Number(e.target.dataset.i);
       state.items[i].nonRecoverableDep = Math.max(0, Number(e.target.value) || 0);
+      refreshAcvCell(i);
+    })
+  );
+  body.querySelectorAll(".rps-in").forEach((el) =>
+    el.addEventListener("input", (e) => {
+      const i = Number(e.target.dataset.i);
+      state.items[i].rps = Math.max(0, Number(e.target.value) || 0);
       refreshAcvCell(i);
     })
   );
@@ -831,28 +897,33 @@ function groupByTrade(items) {
   const extras = [...byTrade.keys()].filter((t) => !TRADE_ORDER.includes(t)).sort();
   return [...ordered, ...extras].map((t) => {
     const its = byTrade.get(t);
-    let rcv = 0, op = 0, tax = 0, recDep = 0, nonRecDep = 0, pwi = 0, acv = 0;
+    let rcv = 0, op = 0, tax = 0, recDep = 0, nonRecDep = 0, pwi = 0, rps = 0, acv = 0;
     for (const it of its) {
       const r = Number(it.rcv) || 0;
       const p = Number(it.paidWhenIncurred) || 0;
       const rec = Number(it.recoverableDep) || 0;
       const nr = Number(it.nonRecoverableDep) || 0;
+      const cp = Number(it.rps) || 0;
       rcv += r;
       op += Number(it.op) || 0;
       tax += Number(it.tax) || 0;
       recDep += rec;
       nonRecDep += nr;
       pwi += p;
-      acv += r - p - rec - nr; // each line's ACV already nets PWI — same formula everywhere
+      rps += cp;
+      acv += r - p - rec - nr - cp; // each line's ACV nets PWI and RPS — same formula everywhere
     }
     return {
       trade: t,
       color: TRADE_COLORS[t] || "#94a3b8",
       items: [...its].sort((x, y) => compareLineNumbers(x.displayNumber, y.displayNumber)),
-      rcv, op, tax, recDep, nonRecDep, pwi, acv,
+      rcv, op, tax, recDep, nonRecDep, pwi, rps, acv,
     };
   });
 }
+// True when the claim carries any roof-payment-schedule customer portion — the RPS column is
+// shown on the printed tables only then, so claims without it look exactly as before.
+const claimHasRps = () => state.items.some((it) => (Number(it.rps) || 0) > 0);
 
 // One "Summary by Trade" table: trade rows + a total row. RCV is the first money column (the
 // number the production manager reads first). Per-line O&P/Taxes, when the carrier
@@ -864,11 +935,12 @@ function summaryTableHTML(groups, { op = null, tax = null, totalLabel = "Total",
   const dash = dashHTML;
   const t = groups.reduce(
     (a, g) => {
-      a.rcv += g.rcv; a.op += g.op || 0; a.tax += g.tax || 0; a.recDep += g.recDep; a.nonRecDep += g.nonRecDep; a.pwi += g.pwi; a.acv += g.acv;
+      a.rcv += g.rcv; a.op += g.op || 0; a.tax += g.tax || 0; a.recDep += g.recDep; a.nonRecDep += g.nonRecDep; a.pwi += g.pwi; a.rps += g.rps || 0; a.acv += g.acv;
       return a;
     },
-    { rcv: 0, op: 0, tax: 0, recDep: 0, nonRecDep: 0, pwi: 0, acv: 0 }
+    { rcv: 0, op: 0, tax: 0, recDep: 0, nonRecDep: 0, pwi: 0, rps: 0, acv: 0 }
   );
+  const showRps = claimHasRps();
   const rows = !showRows ? "" : groups
     .map(
       (g) => `
@@ -880,6 +952,7 @@ function summaryTableHTML(groups, { op = null, tax = null, totalLabel = "Total",
         <td>${g.pwi > 0 ? fmtUSD(g.pwi) : dash}</td>
         <td>${fmtUSD(g.recDep)}</td>
         <td>${fmtUSD(g.nonRecDep)}</td>
+        ${showRps ? `<td>${g.rps > 0 ? fmtUSD(g.rps) : dash}</td>` : ""}
         <td>${fmtUSD(g.acv)}</td>
       </tr>`
     )
@@ -888,7 +961,7 @@ function summaryTableHTML(groups, { op = null, tax = null, totalLabel = "Total",
       <table class="summary">
         <thead><tr>
           <th class="left">Trade</th><th>RCV</th><th>O&amp;P</th><th>Taxes</th>
-          <th>Paid When Incurred</th><th>Recoverable Dep.</th><th>Non-Rec. Dep.</th><th>ACV</th>
+          <th>Paid When Incurred</th><th>Recoverable Dep.</th><th>Non-Rec. Dep.</th>${showRps ? "<th>RPS Customer Portion</th>" : ""}<th>ACV</th>
         </tr></thead>
         <tbody>${rows}</tbody>
         <tfoot><tr>
@@ -899,6 +972,7 @@ function summaryTableHTML(groups, { op = null, tax = null, totalLabel = "Total",
           <td>${t.pwi > 0 ? fmtUSD(t.pwi) : dash}</td>
           <td>${fmtUSD(t.recDep)}</td>
           <td>${fmtUSD(t.nonRecDep)}</td>
+          ${showRps ? `<td>${fmtUSD(t.rps)}</td>` : ""}
           <td>${fmtUSD(t.acv)}</td>
         </tr></tfoot>
       </table>`;
@@ -1042,10 +1116,12 @@ function tradePagesHTML(groups, chunksByGroup) {
 // appears only on the last page so it sums the WHOLE trade exactly once.
 function tradeDetailPageHTML(g, pageItems, { cont = false, last = true } = {}) {
   const dash = dashHTML;
+  const showRps = claimHasRps();
   const rows = pageItems
     .map((it) => {
       const recAmt = Number(it.recoverableDep) || 0;
       const nrAmt = Number(it.nonRecoverableDep) || 0;
+      const rpsAmt = Number(it.rps) || 0;
       const rcv = Number(it.rcv) || 0;
       const pwiAmt = Number(it.paidWhenIncurred) || 0;
       const tag = pwiAmt > 0
@@ -1060,7 +1136,8 @@ function tradeDetailPageHTML(g, pageItems, { cont = false, last = true } = {}) {
               <td>${pwiAmt > 0 ? fmtUSD(pwiAmt) : dash}</td>
               <td>${recAmt > 0 ? fmtUSD(recAmt) : dash}</td>
               <td>${nrAmt > 0 ? fmtUSD(nrAmt) : dash}</td>
-              <td>${fmtUSD(rcv - pwiAmt - recAmt - nrAmt)}</td>
+              ${showRps ? `<td>${rpsAmt > 0 ? fmtUSD(rpsAmt) : dash}</td>` : ""}
+              <td>${fmtUSD(rcv - pwiAmt - recAmt - nrAmt - rpsAmt)}</td>
             </tr>`;
     })
     .join("");
@@ -1078,7 +1155,7 @@ function tradeDetailPageHTML(g, pageItems, { cont = false, last = true } = {}) {
     : `
             <tfoot><tr>
               <td class="left" colspan="3">${esc(g.trade)} total (${g.items.length} line${g.items.length === 1 ? "" : "s"})</td>
-              <td>${fmtUSD(g.rcv)}</td><td>${g.pwi > 0 ? fmtUSD(g.pwi) : dash}</td><td>${fmtUSD(g.recDep)}</td><td>${fmtUSD(g.nonRecDep)}</td><td>${fmtUSD(g.acv)}</td>
+              <td>${fmtUSD(g.rcv)}</td><td>${g.pwi > 0 ? fmtUSD(g.pwi) : dash}</td><td>${fmtUSD(g.recDep)}</td><td>${fmtUSD(g.nonRecDep)}</td>${showRps ? `<td>${fmtUSD(g.rps)}</td>` : ""}<td>${fmtUSD(g.acv)}</td>
             </tr></tfoot>`;
   return `
         <section class="page">
@@ -1088,7 +1165,7 @@ function tradeDetailPageHTML(g, pageItems, { cont = false, last = true } = {}) {
           <table class="lines">
             <thead><tr>
               <th class="left">Line&nbsp;#</th><th class="left">Description</th><th class="left">Quantity</th>
-              <th>RCV</th><th>Paid When Incurred</th><th>Recoverable Dep.</th><th>Non-Rec. Dep.</th><th>ACV</th>
+              <th>RCV</th><th>Paid When Incurred</th><th>Recoverable Dep.</th><th>Non-Rec. Dep.</th>${showRps ? "<th>RPS Cust. Portion</th>" : ""}<th>ACV</th>
             </tr></thead>
             <tbody>${rows}</tbody>${tfoot}
           </table>
@@ -1111,16 +1188,16 @@ function renderDoc() {
   // Header block, 3 rows × 2 columns. Left: who/when. Right: what the insurance pays, computed
   // from THIS sheet's own totals (the Total row of the claim-wide table) so the header always
   // ties to the table beneath it:
-  //   Total Insurance Pays Homeowner = RCV − Non-Recoverable Dep. − Deductible − Paid When Incurred
+  //   Total Insurance Pays Homeowner = RCV − Non-Recoverable Dep. − RPS customer portion − Deductible − Paid When Incurred
   //   1st Payment (ACV check)        = ACV − Deductible
   // where ACV already nets PWI and both depreciation buckets (same formula everywhere).
   // Deductible is the claim's stated deductible (0 when the parser did not find one).
   const claimTotals = groupByTrade(items).reduce(
-    (a, g) => { a.rcv += g.rcv; a.nonRecDep += g.nonRecDep; a.pwi += g.pwi; a.acv += g.acv; return a; },
-    { rcv: 0, nonRecDep: 0, pwi: 0, acv: 0 }
+    (a, g) => { a.rcv += g.rcv; a.nonRecDep += g.nonRecDep; a.pwi += g.pwi; a.rps += g.rps || 0; a.acv += g.acv; return a; },
+    { rcv: 0, nonRecDep: 0, pwi: 0, rps: 0, acv: 0 }
   );
   const deductible = md.deductible != null ? Number(md.deductible) || 0 : 0;
-  const insurancePays = claimTotals.rcv - claimTotals.nonRecDep - deductible - claimTotals.pwi;
+  const insurancePays = claimTotals.rcv - claimTotals.nonRecDep - claimTotals.rps - deductible - claimTotals.pwi;
   const firstPayment = claimTotals.acv - deductible;
   // Rendered row-major into a 2-column grid: [left, right] per row.
   const metaRows = [
@@ -1248,8 +1325,9 @@ async function loadSample() {
         tax: Number(it.tax) || 0,
         recoverableDep,
         nonRecoverableDep,
+        rps: Math.max(0, Number(it.rpsCustomerPortion) || 0),
         paidWhenIncurred,
-        acv: rcv - paidWhenIncurred - recoverableDep - nonRecoverableDep,
+        acv: rcv - paidWhenIncurred - recoverableDep - nonRecoverableDep - Math.max(0, Number(it.rpsCustomerPortion) || 0),
         trade: "Not Categorized", // start uncategorized, like a real parse
       };
     });
@@ -1304,7 +1382,8 @@ async function loadSample() {
 //   Insurance pays            = ACV on EVERY line − deductible (first check)
 //                             + recoverable dep (+ paid-when-incurred) on contracted lines
 //   Out-of-pocket             = job value − insurance pays
-//                             = deductible + upgrades + contractor pricing + non-rec dep − ACV credits − marketing
+//                             = deductible + upgrades + contractor pricing + non-rec dep
+//                               + RPS customer portion − ACV credits − marketing
 //   (negative out-of-pocket = a credit back to the homeowner)
 const SFC_TRADE_UOM = { ROOF: "SQ", SIDING: "SF", GUTTERS: "LF", PAINT: "SF", WINDOWS: "EA", FENCE: "LF", GARAGE: "SF", SOLAR: "PNL" };
 const SFC_MIN_JOBS = 3; // fewer measured jobs than this → "no SFC rate yet"
@@ -1319,7 +1398,7 @@ const SFC_OTHER_PCT = 21;
 const SFC_TRADE_SERVICE = {
   ROOF: "Roofing Services", GUTTERS: "Gutter Services", SIDING: "Siding Services", WINDOWS: "Window Services",
   PAINT: "Painting Services", SOLAR: "Solar Services", FENCE: "Fence Services", GARAGE: "Garage Services",
-  MISC: "Miscellaneous", "PERSONAL PROPERTY": "Personal Property",
+  MISC: "Miscellaneous", "PERSONAL PROPERTY": "Personal Property", "SALES TAX": "Sales Tax",
 };
 const sfcServiceName = (t) =>
   SFC_TRADE_SERVICE[t] || `${String(t).toLowerCase().replace(/\b\w/g, (ch) => ch.toUpperCase())} Services`;
@@ -1392,7 +1471,7 @@ const paren = (n) => (n > 0 ? `(${fmtUSD(n)})` : fmtUSD(0));
 // ---- lines, credits ----
 const sfcLineKey = (it) => state.items.indexOf(it);
 const sfcLineACV = (it) =>
-  (Number(it.rcv) || 0) - (Number(it.paidWhenIncurred) || 0) - (Number(it.recoverableDep) || 0) - (Number(it.nonRecoverableDep) || 0);
+  (Number(it.rcv) || 0) - (Number(it.paidWhenIncurred) || 0) - (Number(it.recoverableDep) || 0) - (Number(it.nonRecoverableDep) || 0) - (Number(it.rps) || 0);
 const sfcIsCredited = (it) => !!sfc.credits[sfcLineKey(it)];
 function sfcSetCredited(it, on) {
   const k = sfcLineKey(it);
@@ -1400,16 +1479,17 @@ function sfcSetCredited(it, on) {
 }
 // Per trade: contracted (non-credited) vs credited figures.
 function sfcContracted(g) {
-  let rcv = 0, acv = 0, rec = 0, nonRec = 0, pwi = 0, credit = 0, creditRcv = 0, creditRec = 0, credited = 0, contractedCount = 0;
+  let rcv = 0, acv = 0, rec = 0, nonRec = 0, pwi = 0, rps = 0, credit = 0, creditRcv = 0, creditRec = 0, credited = 0, contractedCount = 0;
   for (const it of g.items) {
     const r = Number(it.recoverableDep) || 0;
     if (sfcIsCredited(it)) { credit += sfcLineACV(it); creditRcv += Number(it.rcv) || 0; creditRec += r; credited += 1; }
     else {
       rcv += Number(it.rcv) || 0; acv += sfcLineACV(it); rec += r; contractedCount += 1;
       nonRec += Number(it.nonRecoverableDep) || 0; pwi += Number(it.paidWhenIncurred) || 0;
+      rps += Number(it.rps) || 0; // roof payment schedule customer portion on contracted lines
     }
   }
-  return { rcv, acv, rec, nonRec, pwi, credit, creditRcv, creditRec, credited, contractedCount };
+  return { rcv, acv, rec, nonRec, pwi, rps, credit, creditRcv, creditRec, credited, contractedCount };
 }
 function sfcTotalCredits() {
   return state.items.reduce((a, it) => a + (sfcIsCredited(it) ? sfcLineACV(it) : 0), 0);
@@ -1486,6 +1566,7 @@ function sfcMoney(rows) {
   const recTotal = rows.reduce((a, r) => a + r.c.rec, 0);
   const pwiTotal = rows.reduce((a, r) => a + r.c.pwi, 0);
   const nonRecTotal = rows.reduce((a, r) => a + r.c.nonRec, 0);
+  const rpsTotal = rows.reduce((a, r) => a + r.c.rps, 0);
   const tradeCost = rows.filter((r) => r.priced).reduce((a, r) => a + r.cost, 0);
   const acvCredits = sfcTotalCredits();
   const marketing = sfcMarketingTotal();
@@ -1496,7 +1577,7 @@ function sfcMoney(rows) {
   const netPct = jobValue > 0 ? ((jobValue - totalCost) / jobValue) * 100 : null;
   const insurancePays = claimACV - deductible + recTotal + pwiTotal;
   const outOfPocket = Math.round((jobValue - insurancePays) * 100) / 100; // < 0 → credit back to the homeowner
-  return { payout, payoutACV, claimRCV, claimACV, upgrades, adjust, recTotal, pwiTotal, nonRecTotal, tradeCost, acvCredits, marketing, deductible, jobValue, other, totalCost, netPct, insurancePays, outOfPocket };
+  return { payout, payoutACV, claimRCV, claimACV, upgrades, adjust, recTotal, pwiTotal, nonRecTotal, rpsTotal, tradeCost, acvCredits, marketing, deductible, jobValue, other, totalCost, netPct, insurancePays, outOfPocket };
 }
 
 // ---- flow ----
@@ -1593,11 +1674,13 @@ function sfcWireNav(onPrev, onNext) {
 // ---- step: one trade's lines ----
 function renderSfcTrade(g, idx, n) {
   const dash = dashHTML;
+  const showRps = claimHasRps();
   const rowHTML = (it) => {
     const key = sfcLineKey(it);
     const rec = Number(it.recoverableDep) || 0;
     const nr = Number(it.nonRecoverableDep) || 0;
     const cr = sfcIsCredited(it);
+    const cp = Number(it.rps) || 0;
     return `
       <tr class="${cr ? "sfc-credited" : ""}" data-key="${key}">
         <td class="num">${esc(it.displayNumber)}</td>
@@ -1606,6 +1689,7 @@ function renderSfcTrade(g, idx, n) {
         <td>${fmtUSD(Number(it.rcv) || 0)}</td>
         <td>${rec > 0 ? fmtUSD(rec) : dash}</td>
         <td>${nr > 0 ? fmtUSD(nr) : dash}</td>
+        ${showRps ? `<td>${cp > 0 ? fmtUSD(cp) : dash}</td>` : ""}
         <td class="acv">${fmtUSD(sfcLineACV(it))}</td>
         <td class="check"><input class="sfc-credit" type="checkbox" data-key="${key}" ${cr ? "checked" : ""} title="Credit this line's ACV to the homeowner" /></td>
       </tr>`;
@@ -1621,12 +1705,12 @@ function renderSfcTrade(g, idx, n) {
     <table class="sfc-lines">
       <thead><tr>
         <th class="num">Line #</th><th class="left">Description</th><th class="left">Quantity</th>
-        <th>RCV</th><th>Recoverable Dep.</th><th>Non-Rec. Dep.</th><th>ACV</th><th class="check">Credit ACV</th>
+        <th>RCV</th><th>Recoverable Dep.</th><th>Non-Rec. Dep.</th>${showRps ? "<th>RPS Cust. Portion</th>" : ""}<th>ACV</th><th class="check">Credit ACV</th>
       </tr></thead>
       <tbody id="sfcTradeRows">${g.items.map(rowHTML).join("")}</tbody>
       <tfoot><tr>
         <td class="left" colspan="3">${esc(g.trade)} · ${g.items.length} line${g.items.length === 1 ? "" : "s"}</td>
-        <td>${fmtUSD(g.rcv)}</td><td>${fmtUSD(g.recDep)}</td><td>${fmtUSD(g.nonRecDep)}</td><td>${fmtUSD(g.acv)}</td>
+        <td>${fmtUSD(g.rcv)}</td><td>${fmtUSD(g.recDep)}</td><td>${fmtUSD(g.nonRecDep)}</td>${showRps ? `<td>${fmtUSD(g.rps)}</td>` : ""}<td>${fmtUSD(g.acv)}</td>
         <td class="check credit-total" id="sfcTradeCredit">${fmtUSD(c0.credit)}</td>
       </tr></tfoot>
     </table>`;
@@ -1827,6 +1911,7 @@ function renderSfcAllocate() {
         <div class="alloc-pool-split"><span>(+) Upgrades</span><b>${fmtUSD(mm.upgrades)}</b></div>
         <div class="alloc-pool-split"><span>(+) Contractor pricing</span><b>${fmtUSD(mm.adjust)}</b></div>
         ${mm.nonRecTotal > 0 ? `<div class="alloc-pool-split"><span>(+) Non-recoverable dep.</span><b>${fmtUSD(mm.nonRecTotal)}</b></div>` : ""}
+        ${mm.rpsTotal > 0 ? `<div class="alloc-pool-split"><span>(+) Roof payment schedule</span><b>${fmtUSD(mm.rpsTotal)}</b></div>` : ""}
         <div class="alloc-pool-split"><span>(−) ACV credits</span><b>${paren(mm.acvCredits)}</b></div>
         ${mm.marketing > 0 ? `<div class="alloc-pool-split"><span>(−) Marketing credits</span><b>${paren(mm.marketing)}</b></div>` : ""}
         <div class="alloc-pool-total ${mm.outOfPocket < 0 ? "pos" : ""}"><span>${mm.outOfPocket < 0 ? "Credit back to homeowner" : "Homeowner out-of-pocket"}</span><b>${fmtUSD(Math.abs(mm.outOfPocket))}</b></div>`;
@@ -1899,15 +1984,15 @@ function claimSummaryPageHTML(deductibleOverride) {
   const md = state.summary || {};
   const job = state.jobInfo;
   const totals = groupByTrade(items).reduce(
-    (a, g) => { a.rcv += g.rcv; a.nonRecDep += g.nonRecDep; a.pwi += g.pwi; a.acv += g.acv; return a; },
-    { rcv: 0, nonRecDep: 0, pwi: 0, acv: 0 }
+    (a, g) => { a.rcv += g.rcv; a.nonRecDep += g.nonRecDep; a.pwi += g.pwi; a.rps += g.rps || 0; a.acv += g.acv; return a; },
+    { rcv: 0, nonRecDep: 0, pwi: 0, rps: 0, acv: 0 }
   );
   const ded = deductibleOverride != null ? deductibleOverride : md.deductible != null ? Number(md.deductible) || 0 : null;
   const metaRows = [
     ["Job #", job && job.job_number != null ? String(job.job_number) : "—"],
     ["Deductible", ded != null ? fmtUSD(ded) : "—"],
     ["Client Name", sfc.client || (job && job.contact_name) || "—"],
-    ["Total Insurance Pays Homeowner", fmtUSD(totals.rcv - totals.nonRecDep - (ded || 0) - totals.pwi)],
+    ["Total Insurance Pays Homeowner", fmtUSD(totals.rcv - totals.nonRecDep - totals.rps - (ded || 0) - totals.pwi)],
     ["Date Printed", new Date().toLocaleDateString("en-US")],
     ["1st Payment (ACV − Deductible)", fmtUSD(totals.acv - (ded || 0))],
   ];
@@ -1976,6 +2061,7 @@ function renderSfcEstimate() {
               <tr><td class="left">(+) Upgrades</td><td>${fmtUSD(m.upgrades)}</td></tr>
               <tr><td class="left">(+) Contractor Pricing</td><td>${fmtUSD(m.adjust)}</td></tr>
               ${m.nonRecTotal > 0 ? `<tr><td class="left">(+) Non-recoverable depreciation</td><td>${fmtUSD(m.nonRecTotal)}</td></tr>` : ""}
+              ${m.rpsTotal > 0 ? `<tr><td class="left">(+) Roof payment schedule <span class="sfc-muted">not paid by insurance</span></td><td>${fmtUSD(m.rpsTotal)}</td></tr>` : ""}
               <tr><td class="left">(−) ACV credits</td><td>${paren(m.acvCredits)}</td></tr>
               ${sfc.marketingCredits.length
                 ? sfc.marketingCredits.map((mk) => `<tr><td class="left">(−) ${esc(mk.type)} credit</td><td>${paren(Number(mk.amount) || 0)}</td></tr>`).join("")
@@ -2129,6 +2215,17 @@ function init() {
     const file = e.target.files[0];
     if (file) parsePdf(file);
     e.target.value = ""; // allow re-selecting the same file
+  });
+
+  // "＋ Tax / adjustment line": a blank editable line in the SALES TAX trade, for summary-only
+  // tax / O&P (and their depreciation) the parser did not carry automatically.
+  document.getElementById("addAdjBtn").addEventListener("click", () => {
+    if (!state.items.length) return setStatus("Upload a claim first.", "error");
+    state.items.push(newAdjustmentLine());
+    renderReview();
+    setStatus("Added a tax / adjustment line at the bottom — type its RCV and depreciation.", "ok");
+    const rows = document.querySelectorAll("#reviewBody tr");
+    if (rows.length) rows[rows.length - 1].scrollIntoView({ behavior: "smooth", block: "center" });
   });
 
   // Build the summary — but first reconcile the line items against the claim's own summary page.
