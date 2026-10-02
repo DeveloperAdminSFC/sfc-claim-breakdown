@@ -1053,3 +1053,13 @@ body.sfc-open { overflow: hidden; }
     break-inside: avoid; page-break-inside: avoid;
   }
 }
+
+/* ============================ PRINT: ONLY THE OPEN DOCUMENT ============================ */
+/* The print rules above force the summary / estimate windows to display as normal flow, and
+   that rule (an id selector) outranked `.modal[hidden] { display: none }` — so a document that
+   had been built and CLOSED still printed, in full, alongside the one on screen (the whole
+   claim summary plus the estimate, with the summary page twice). A closed window must never
+   reach the paper: same id specificity plus the attribute, declared last. */
+@media print {
+  #summaryModal[hidden], #sfcModal[hidden], #discrepancyModal { display: none !important; }
+}
