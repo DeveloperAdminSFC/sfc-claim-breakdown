@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Claim Breakdown by Trade</title>
-  <link rel="stylesheet" href="styles.css?v=20261002d" />
+  <link rel="stylesheet" href="styles.css?v=20261002e" />
 </head>
 <body>
   <!-- ===================== CONTROL BAR (screen only) ===================== -->
@@ -44,6 +44,9 @@
         <select id="bulkStructureSelect" class="input input-select" title="Structure to apply"></select>
         <button id="applyLinesBtn" class="btn">Apply to lines</button>
         <button id="addAdjBtn" class="btn btn-ghost" title="Add a free-form line: name it, type RCV, depreciation and ACV directly, assign any trade">＋ Price adjustment line</button>
+        <label class="ded-field" title="The claim's deductible. Type it here when the claim report does not state one.">Deductible
+          <input id="dedInput" class="input" type="number" min="0" step="0.01" inputmode="decimal" placeholder="not on claim" />
+        </label>
         <button id="buildBtn" class="btn btn-primary">Build summary ↓</button>
         <button id="sfcBtn" class="btn btn-sfc" title="Price the claim's trades with SFC's live cost history">Build SFC Estimate</button>
       </div>
@@ -147,6 +150,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=20261002d"></script>
+  <script src="app.js?v=20261002e"></script>
 </body>
 </html>

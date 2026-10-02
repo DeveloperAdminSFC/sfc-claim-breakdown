@@ -823,7 +823,19 @@ function parseLineRange(str, items) {
   return { wanted, bad };
 }
 
+// The Deductible box on the review screen. state.summary.deductible is the single value: the
+// claim's stated deductible when the parser found one, otherwise whatever is typed here (many
+// appraisals leave it off the claim report). Flagged amber while it is missing.
+function syncDeductibleUI() {
+  const el = document.getElementById("dedInput");
+  if (!el) return;
+  const d = state.summary ? state.summary.deductible : null;
+  if (document.activeElement !== el) el.value = d != null ? String(d) : "";
+  el.closest(".ded-field").classList.toggle("missing", d == null);
+}
+
 function renderReview() {
+  syncDeductibleUI();
   const body = document.getElementById("reviewBody");
   body.innerHTML = state.items
     .map((it, i) => `
@@ -1660,7 +1672,7 @@ async function openSfcEstimate() {
   }
   if (!sfc.client && state.jobInfo && state.jobInfo.contact_name) sfc.client = state.jobInfo.contact_name;
   const md = state.summary || {};
-  if (sfc.deductible == null && md.deductible != null) sfc.deductible = Number(md.deductible) || 0;
+  sfc.deductible = md.deductible != null ? Number(md.deductible) || 0 : null; // one shared deductible
 
   document.getElementById("sfcModal").hidden = false;
   document.body.classList.add("sfc-open");
@@ -1919,6 +1931,7 @@ function renderSfcPricing() {
     sfc.client = document.getElementById("sfcClient").value.trim();
     const d = document.getElementById("sfcDeductible").value;
     sfc.deductible = d === "" ? null : Math.max(0, Number(d) || 0);
+    if (state.summary) { state.summary.deductible = sfc.deductible; syncDeductibleUI(); }
   };
   const rerender = () => { snapshot(); renderSfcPricing(); };
   for (const btn of document.querySelectorAll(".sfc-mode-btn")) {
@@ -2281,6 +2294,13 @@ function init() {
     const file = e.target.files[0];
     if (file) parsePdf(file);
     e.target.value = ""; // allow re-selecting the same file
+  });
+
+  // Deductible box: type it when the claim report does not state one (or correct it).
+  document.getElementById("dedInput").addEventListener("input", (e) => {
+    if (!state.summary) state.summary = {};
+    state.summary.deductible = e.target.value === "" ? null : Math.max(0, Number(e.target.value) || 0);
+    e.target.closest(".ded-field").classList.toggle("missing", state.summary.deductible == null);
   });
 
   // "＋ Price adjustment line": a blank free-form line — name it, type its RCV, depreciation

@@ -1008,3 +1008,9 @@ body.sfc-open { overflow: hidden; }
 .review-table .desc-in { width: 100%; min-width: 180px; height: 32px; font-size: 13px; text-align: left; }
 .review-table .adj-del { margin-left: 6px; border: 0; background: none; color: var(--ink-faint); cursor: pointer; font-size: 12px; padding: 2px 4px; }
 .review-table .adj-del:hover { color: var(--neg); }
+
+/* Deductible box on the review toolbar; amber while the claim gives none */
+.ded-field { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--ink-soft); white-space: nowrap; }
+.ded-field .input { width: 120px; text-align: right; font-variant-numeric: tabular-nums; }
+.ded-field.missing { color: #9a5b00; }
+.ded-field.missing .input { border-color: #f59e0b; background: #fffbeb; }
