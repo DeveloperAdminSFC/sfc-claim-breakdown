@@ -487,17 +487,36 @@ function summaryAdjustmentLine(parsed, items) {
   const rps = resid(s.totalCustomerPortionRPS, "rps");
   return newAdjustmentLine({
     description: (Number(s.totalOP) || 0) > 0 ? "Overhead & profit and sales tax (claim summary)" : "Material sales tax (claim summary)",
+    number: "TAX", trade: "SALES TAX",
     rcv, recoverableDep, nonRecoverableDep, rps,
   });
 }
-// A blank or prefilled adjustment line. Lives in the SALES TAX trade; every amount is editable.
-function newAdjustmentLine({ description = "Sales tax / adjustment (claim summary)", rcv = 0, recoverableDep = 0, nonRecoverableDep = 0, rps = 0 } = {}) {
+// A blank or prefilled adjustment line: every amount is editable, the description is editable,
+// and ACV can be typed directly. The auto tax line lands in SALES TAX; a hand-added price
+// adjustment starts uncategorized like any other line.
+function newAdjustmentLine({ description = "Price adjustment", number = "ADJ", trade = "Not Categorized", rcv = 0, recoverableDep = 0, nonRecoverableDep = 0, rps = 0 } = {}) {
   return {
-    number: "TAX", displayNumber: "TAX", section: "", description, quantity: "",
+    number, displayNumber: number, section: "", description, quantity: "",
     rcv, op: 0, tax: 0, recoverableDep, nonRecoverableDep, rps, paidWhenIncurred: 0,
     acv: rcv - recoverableDep - nonRecoverableDep - rps,
-    trade: "SALES TAX", isAdjustment: true,
+    // acvManual: an ACV the user typed on this line. While set, it IS the line's ACV — no
+    // equation — so the line can be pushed to whatever the claim says. null = follow the formula.
+    acvManual: null,
+    trade, isAdjustment: true,
   };
+}
+// A line's ACV, the single source for every total, table and estimate:
+//   normal line      RCV − Paid When Incurred − Recoverable − Non-Recoverable − RPS customer portion
+//   adjustment line  the typed ACV when the user set one, else the same formula
+function itemACV(it) {
+  if (it.isAdjustment && it.acvManual != null) return Number(it.acvManual) || 0;
+  return (
+    (Number(it.rcv) || 0) -
+    (Number(it.paidWhenIncurred) || 0) -
+    (Number(it.recoverableDep) || 0) -
+    (Number(it.nonRecoverableDep) || 0) -
+    (Number(it.rps) || 0)
+  );
 }
 
 // Recompute a row's ACV cell live. ACV is the one computed cell and always:
@@ -506,14 +525,13 @@ function newAdjustmentLine({ description = "Sales tax / adjustment (claim summar
 // just follows this single formula — no special cases.
 function refreshAcvCell(i) {
   const it = state.items[i];
-  it.acv =
-    (Number(it.rcv) || 0) -
-    (Number(it.paidWhenIncurred) || 0) -
-    (Number(it.recoverableDep) || 0) -
-    (Number(it.nonRecoverableDep) || 0) -
-    (Number(it.rps) || 0);
+  it.acv = itemACV(it);
   const cell = document.querySelector(`.acv-cell[data-i="${i}"]`);
-  if (cell) cell.textContent = fmtUSD(it.acv);
+  if (!cell) return;
+  // Adjustment lines hold an ACV input: follow the formula there only until the user types one.
+  const inp = cell.querySelector(".acv-in");
+  if (inp) { if (it.acvManual == null) inp.value = String(Math.round(it.acv * 100) / 100); }
+  else cell.textContent = fmtUSD(it.acv);
 }
 
 // Warn when the parser could not confidently attribute the recoverable vs non-recoverable
@@ -559,7 +577,7 @@ function reconcileSummary() {
   const sumNonRec = items.reduce((a, it) => a + (Number(it.nonRecoverableDep) || 0), 0);
   const sumPWI = items.reduce((a, it) => a + (Number(it.paidWhenIncurred) || 0), 0);
   const sumRps = items.reduce((a, it) => a + (Number(it.rps) || 0), 0);
-  const acvLineItems = sumRCV - sumPWI - sumRecov - sumNonRec - sumRps;
+  const acvLineItems = items.reduce((a, it) => a + itemACV(it), 0);
 
   const defs = [
     { label: "RCV", lineItems: sumRCV, claim: s.totalRCV },
@@ -779,18 +797,18 @@ function renderReview() {
   const body = document.getElementById("reviewBody");
   body.innerHTML = state.items
     .map((it, i) => `
-      <tr data-i="${i}">
-        <td class="num">${esc(it.displayNumber)}</td>
-        <td class="left desc">${esc(it.description)}</td>
+      <tr data-i="${i}"${it.isAdjustment ? ' class="adj-row"' : ""}>
+        <td class="num">${esc(it.displayNumber)}${it.isAdjustment ? `<button type="button" class="adj-del" data-i="${i}" title="Remove this line">✕</button>` : ""}</td>
+        <td class="left desc">${it.isAdjustment ? `<input type="text" class="input desc-in" data-i="${i}" value="${esc(it.description)}" placeholder="Description" />` : esc(it.description)}</td>
         <td class="left">${esc(it.quantity)}</td>
         <td class="edit-col">${moneyInput("op-in", i, it.op)}</td>
         <td class="edit-col">${moneyInput("tax-in", i, it.tax)}</td>
-        <td class="edit-col">${moneyInput("rcv-in", i, it.rcv)}</td>
+        <td class="edit-col">${it.isAdjustment ? `<input type="number" step="0.01" inputmode="decimal" class="amt rcv-in" data-i="${i}" value="${Number(it.rcv) || 0}" />` : moneyInput("rcv-in", i, it.rcv)}</td>
         <td class="edit-col">${moneyInput("pwi-in", i, it.paidWhenIncurred)}</td>
         <td class="edit-col">${moneyInput("rec-in", i, it.recoverableDep)}</td>
         <td class="edit-col">${moneyInput("nonrec-in", i, it.nonRecoverableDep)}</td>
         <td class="edit-col">${moneyInput("rps-in", i, it.rps)}</td>
-        <td class="acv-cell" data-i="${i}">${fmtUSD(it.acv)}</td>
+        <td class="acv-cell" data-i="${i}">${it.isAdjustment ? `<input type="number" step="0.01" inputmode="decimal" class="amt acv-in" data-i="${i}" value="${Math.round(itemACV(it) * 100) / 100}" title="Type the ACV to set it directly; clear it to follow RCV minus depreciation" />` : fmtUSD(it.acv)}</td>
         <td class="left">${tradeSelectHTML(it.trade, `data-i="${i}"`)}</td>
         <td class="left">${structureSelectHTML(it.structureId, `data-i="${i}"`)}</td>
       </tr>`)
@@ -839,6 +857,23 @@ function renderReview() {
       const i = Number(e.target.dataset.i);
       state.items[i].nonRecoverableDep = Math.max(0, Number(e.target.value) || 0);
       refreshAcvCell(i);
+    })
+  );
+  // Adjustment lines: free description, ACV typed directly (no equation), removable.
+  body.querySelectorAll(".desc-in").forEach((el) =>
+    el.addEventListener("input", (e) => { state.items[Number(e.target.dataset.i)].description = e.target.value; })
+  );
+  body.querySelectorAll(".acv-in").forEach((el) =>
+    el.addEventListener("input", (e) => {
+      const it = state.items[Number(e.target.dataset.i)];
+      it.acvManual = e.target.value === "" ? null : Number(e.target.value) || 0;
+      it.acv = itemACV(it);
+    })
+  );
+  body.querySelectorAll(".adj-del").forEach((el) =>
+    el.addEventListener("click", (e) => {
+      state.items.splice(Number(e.currentTarget.dataset.i), 1);
+      renderReview();
     })
   );
   body.querySelectorAll(".rps-in").forEach((el) =>
@@ -911,7 +946,7 @@ function groupByTrade(items) {
       nonRecDep += nr;
       pwi += p;
       rps += cp;
-      acv += r - p - rec - nr - cp; // each line's ACV nets PWI and RPS — same formula everywhere
+      acv += itemACV(it); // one ACV rule everywhere (a typed ACV on an adjustment line wins)
     }
     return {
       trade: t,
@@ -1137,7 +1172,7 @@ function tradeDetailPageHTML(g, pageItems, { cont = false, last = true } = {}) {
               <td>${recAmt > 0 ? fmtUSD(recAmt) : dash}</td>
               <td>${nrAmt > 0 ? fmtUSD(nrAmt) : dash}</td>
               ${showRps ? `<td>${rpsAmt > 0 ? fmtUSD(rpsAmt) : dash}</td>` : ""}
-              <td>${fmtUSD(rcv - pwiAmt - recAmt - nrAmt - rpsAmt)}</td>
+              <td>${fmtUSD(itemACV(it))}</td>
             </tr>`;
     })
     .join("");
@@ -1470,8 +1505,7 @@ const paren = (n) => (n > 0 ? `(${fmtUSD(n)})` : fmtUSD(0));
 
 // ---- lines, credits ----
 const sfcLineKey = (it) => state.items.indexOf(it);
-const sfcLineACV = (it) =>
-  (Number(it.rcv) || 0) - (Number(it.paidWhenIncurred) || 0) - (Number(it.recoverableDep) || 0) - (Number(it.nonRecoverableDep) || 0) - (Number(it.rps) || 0);
+const sfcLineACV = (it) => itemACV(it);
 const sfcIsCredited = (it) => !!sfc.credits[sfcLineKey(it)];
 function sfcSetCredited(it, on) {
   const k = sfcLineKey(it);
@@ -2217,13 +2251,14 @@ function init() {
     e.target.value = ""; // allow re-selecting the same file
   });
 
-  // "＋ Tax / adjustment line": a blank editable line in the SALES TAX trade, for summary-only
-  // tax / O&P (and their depreciation) the parser did not carry automatically.
+  // "＋ Price adjustment line": a blank free-form line — name it, type its RCV, depreciation
+  // and ACV directly, assign it to any trade — to make the breakdown match what the claim says.
   document.getElementById("addAdjBtn").addEventListener("click", () => {
     if (!state.items.length) return setStatus("Upload a claim first.", "error");
-    state.items.push(newAdjustmentLine());
+    const n = state.items.filter((it) => it.isAdjustment && String(it.number).startsWith("ADJ")).length;
+    state.items.push(newAdjustmentLine({ number: n ? `ADJ${n + 1}` : "ADJ" }));
     renderReview();
-    setStatus("Added a tax / adjustment line at the bottom — type its RCV and depreciation.", "ok");
+    setStatus("Added a price adjustment line at the bottom — name it, type the amounts (ACV can be typed directly), and pick its trade.", "ok");
     const rows = document.querySelectorAll("#reviewBody tr");
     if (rows.length) rows[rows.length - 1].scrollIntoView({ behavior: "smooth", block: "center" });
   });

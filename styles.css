@@ -1002,3 +1002,9 @@ body.sfc-open { overflow: hidden; }
   .doc { padding: 0 12px; }
   .page { padding: 20px 16px; }
 }
+
+/* Price adjustment / tax lines in the review table: editable description + ACV, removable */
+.review-table tr.adj-row td { background: #f8fafc; }
+.review-table .desc-in { width: 100%; min-width: 180px; height: 32px; font-size: 13px; text-align: left; }
+.review-table .adj-del { margin-left: 6px; border: 0; background: none; color: var(--ink-faint); cursor: pointer; font-size: 12px; padding: 2px 4px; }
+.review-table .adj-del:hover { color: var(--neg); }
