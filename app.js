@@ -34,6 +34,7 @@ const TRADE_ORDER = [
   "ROOF",
   "GUTTERS",
   "SIDING",
+  "STUCCO",
   "WINDOWS",
   "SOLAR",
   "PAINT",
@@ -55,6 +56,7 @@ const TRADE_COLORS = {
   ROOF: "#3b82f6",
   GUTTERS: "#10b981",
   SIDING: "#f59e0b",
+  STUCCO: "#84cc16",
   WINDOWS: "#8b5cf6",
   SOLAR: "#06b6d4",
   PAINT: "#f43f5e",
@@ -1464,7 +1466,7 @@ async function loadSample() {
 //                             = deductible + upgrades + contractor pricing + non-rec dep
 //                               + RPS customer portion − ACV credits − marketing
 //   (negative out-of-pocket = a credit back to the homeowner)
-const SFC_TRADE_UOM = { ROOF: "SQ", SIDING: "SF", GUTTERS: "LF", PAINT: "SF", WINDOWS: "EA", FENCE: "LF", GARAGE: "SF", SOLAR: "PNL" };
+const SFC_TRADE_UOM = { ROOF: "SQ", SIDING: "SF", STUCCO: "SF", GUTTERS: "LF", PAINT: "SF", WINDOWS: "EA", FENCE: "LF", GARAGE: "SF", SOLAR: "PNL" };
 const SFC_MIN_JOBS = 3; // fewer measured jobs than this → "no SFC rate yet"
 // Bid trades: no usable history, the estimator types SFC's cost. Any trade can be switched.
 const SFC_BID_TRADES = new Set(["WINDOWS", "GARAGE", "SOLAR", "PAINT"]);
@@ -1475,7 +1477,7 @@ const SFC_TARGET_MARGIN = 33; // required gross margin, % of revenue
 const SFC_OTHER_PCT = 21;
 // Homeowner-facing names for the trades on the scope of work.
 const SFC_TRADE_SERVICE = {
-  ROOF: "Roofing Services", GUTTERS: "Gutter Services", SIDING: "Siding Services", WINDOWS: "Window Services",
+  ROOF: "Roofing Services", GUTTERS: "Gutter Services", SIDING: "Siding Services", STUCCO: "Stucco Services", WINDOWS: "Window Services",
   PAINT: "Painting Services", SOLAR: "Solar Services", FENCE: "Fence Services", GARAGE: "Garage Services",
   MISC: "Miscellaneous", "PERSONAL PROPERTY": "Personal Property", "PRICE ADJUSTMENT": "Price Adjustment",
 };
