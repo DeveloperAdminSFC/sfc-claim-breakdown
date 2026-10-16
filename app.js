@@ -30,6 +30,10 @@
 
 // ------------------------------- Trades ---------------------------------- //
 // Display order — mirrors TRADE_OPTIONS in the OI platform.
+// Brand mark printed in the top-right corner of every page (summary and estimate).
+const LOGO_HTML = '<img class="page-logo" src="sfc-logo.png" alt="Summit First Construction">';
+const BRAND_ROW = `<div class="page-brand">${LOGO_HTML}</div>`;
+
 const TRADE_ORDER = [
   "ROOF",
   "GUTTERS",
@@ -1154,22 +1158,23 @@ function paginateSummary(headMetaHTML, blocks) {
   probe.style.cssText = "position:absolute;left:-9999px;top:0;width:818px;visibility:hidden";
   document.body.appendChild(probe);
   probe.innerHTML =
-    `<main class="doc" style="max-width:none;margin:0;padding:0"><section class="page">` +
+    `<main class="doc" style="max-width:none;margin:0;padding:0"><section class="page">${BRAND_ROW}` +
     `<div class="sum-headmeta">${headMetaHTML}</div>` +
     blocks.map((b) => `<div class="sum-block">${b}</div>`).join("") +
     `</section></main>`;
   const headH = probe.querySelector(".sum-headmeta").offsetHeight;
+  const brandH = probe.querySelector(".page-brand").offsetHeight; // continuation pages carry only the logo
   const blockHs = [...probe.querySelectorAll(".sum-block")].map((el) => el.offsetHeight);
   probe.remove();
   const chunks = packRowsByHeight(
     blockHs,
-    (ci) => PRINT_USABLE_PX - (ci === 0 ? headH : 0) - PAGE_SLACK
+    (ci) => PRINT_USABLE_PX - (ci === 0 ? headH : brandH) - PAGE_SLACK
   );
   const pagesHTML = chunks
     .map(
       (idxs, ci) =>
         `<section class="page">` +
-        (ci === 0 ? `<div class="sum-headmeta">${headMetaHTML}</div>` : "") +
+        (ci === 0 ? `<div class="sum-headmeta">${headMetaHTML}</div>` : BRAND_ROW) +
         idxs.map((i) => `<div class="sum-block">${blocks[i]}</div>`).join("") +
         `</section>`
     )
@@ -1239,7 +1244,7 @@ function tradeDetailPageHTML(g, pageItems, { cont = false, last = true } = {}) {
   return `
         <section class="page">
           <div class="trade-page-head">
-            <div class="trade-page-title"><span class="bar" style="background:${g.color}"></span><h2>${esc(g.trade)}${cont ? ' <span class="cont-tag">(cont.)</span>' : ""}</h2></div>${totals}
+            <div class="trade-page-title"><span class="bar" style="background:${g.color}"></span><h2>${esc(g.trade)}${cont ? ' <span class="cont-tag">(cont.)</span>' : ""}</h2></div>${totals}${LOGO_HTML}
           </div>
           <table class="lines">
             <thead><tr>
@@ -1297,7 +1302,7 @@ function renderDoc() {
   // divider page ranges stay true (a 5-structure summary does not fit one sheet).
   // Single-structure: one page, one table — that lone table IS the claim total.
   const headMeta = `
-      <div class="doc-head">
+      <div class="doc-head">${LOGO_HTML}
         <p class="doc-eyebrow">Insurance Claim · Trade Breakdown</p>
         <h1 class="doc-title">Claim Summary by Trade</h1>
         <p class="doc-sub">${esc(md.insurance_company || "")}${md.insurance_company && md.date_of_loss ? " · " : ""}${md.date_of_loss ? "Loss dated " + esc(md.date_of_loss) : ""}</p>
@@ -1354,7 +1359,7 @@ function renderDoc() {
       .map((p, si) => {
         // Cover page: the structure name IS the page, with the printed range of its trade sheets.
         const divider = `
-        <section class="page structure-divider">
+        <section class="page structure-divider">${BRAND_ROW}
           <h2 class="sd-name">${esc(p.s.name)}</h2>
           <p class="sd-pages">${esc(ranges[si].label)}</p>
         </section>`;
@@ -1972,7 +1977,7 @@ function claimSummaryPageHTML(deductibleOverride) {
   ];
   return `
     <section class="page">
-      <div class="doc-head">
+      <div class="doc-head">${LOGO_HTML}
         <p class="doc-eyebrow">Insurance Claim · Trade Breakdown</p>
         <h1 class="doc-title">Claim Summary by Trade</h1>
         <p class="doc-sub">${esc(md.insurance_company || "")}${md.insurance_company && md.date_of_loss ? " · " : ""}${md.date_of_loss ? "Loss dated " + esc(md.date_of_loss) : ""}</p>
@@ -1999,7 +2004,7 @@ function renderSfcEstimate() {
   })();
   const subline = [md.insurance_company ? esc(md.insurance_company) : "", crDate !== "—" ? `Claim report ${esc(crDate)}` : ""].filter(Boolean).join(" · ");
   const head = (eyebrow) => `
-      <div class="doc-head">
+      <div class="doc-head">${LOGO_HTML}
         <p class="doc-eyebrow">Summit First Construction · ${eyebrow}</p>
         <h1 class="doc-title sfc-title">${titleOf(eyebrow)}</h1>
         <p class="doc-sub">${subline ? `${subline} · ` : ""}Prepared ${new Date().toLocaleDateString("en-US")}</p>
@@ -2123,7 +2128,7 @@ function renderSfcEstimate() {
       </tr>`).join("");
   const snapshotPage = `
     <section class="page">
-      <div class="doc-head">
+      <div class="doc-head">${LOGO_HTML}
         <p class="doc-eyebrow">SFC Estimate · Price Snapshot</p>
         <h1 class="doc-title sfc-title">${titleOf("SFC Estimate")}</h1>
         ${subline ? `<p class="doc-sub">${subline}</p>` : ""}
