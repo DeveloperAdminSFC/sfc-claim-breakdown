@@ -2159,6 +2159,12 @@ function renderSfcEstimate() {
         <div class="ho-sig"><div class="ho-sig-line"></div><div class="ho-sig-label">Client signature</div><div class="ho-sig-date">Date ____________</div></div>
         <div class="ho-sig"><div class="ho-sig-line"></div><div class="ho-sig-label">SFC Sales Rep signature</div><div class="ho-sig-date">Date ____________</div></div>
       </div>
+      <div class="ho-notice">
+        <p>PLEASE NOTE: CLAIM WILL GO UP AS ADDITIONAL SUPPLEMENTS ARE SUBMITTED!!</p>
+        <p>CONTRACT AMOUNT WILL BE ADJUSTED DUE TO APPROVED SUPPLEMENTS AND APPLICABLE SALES TAX.</p>
+        <p>OUT OF POCKET WILL NOT CHANGE DUE TO CLAIM AMOUNT INCREASE.</p>
+        <p>OUT OF POCKET WILL NOT CHANGE SUBJECT TO THE CURRENT SCOPE OF WORK. IF ADDITIONAL SCOPE IS ADDED, THE OUT OF POCKET WILL CHANGE.</p>
+      </div>
       <p class="ho-fine">This is a preliminary estimate, not a binding contract. Final pricing may change with conditions found during the project or changes in scope.</p>
     </section>`;
 
