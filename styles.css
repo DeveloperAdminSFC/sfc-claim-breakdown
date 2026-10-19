@@ -573,12 +573,12 @@ body {
 @media (max-width: 640px) { .ho-sign { grid-template-columns: 1fr; } }
 /* Boxed columns are a full black grid: every cell bordered, black text, centered. */
 .summary.sfc-payout.snap thead th { color: #000; }
-.summary.sfc-payout.snap tbody td:nth-child(n+3), .summary.sfc-payout.snap tfoot td:nth-child(n+3),
-.summary.sfc-payout.snap thead tr:first-child th:nth-child(n+3), .summary.sfc-payout.snap thead tr:last-child th {
+.summary.sfc-payout.snap tbody td:nth-child(n+4), .summary.sfc-payout.snap tfoot td:nth-child(n+4),
+.summary.sfc-payout.snap thead tr:first-child th:nth-child(n+4), .summary.sfc-payout.snap thead tr:last-child th {
   border: 1.5px solid #000; text-align: center; color: #000;
 }
 .summary.sfc-payout.snap td.sub, .summary.sfc-payout.snap td .dash, .summary.sfc-payout.snap td.sub .dash { color: #000; }
-.summary.sfc-payout.snap tbody tr.snap-money td:nth-child(n+3) { border-top: 1.5px solid #000; }
+.summary.sfc-payout.snap tbody tr.snap-money td:nth-child(n+4) { border-top: 1.5px solid #000; }
 .summary.sfc-payout.snap tbody td.pos, .summary.sfc-payout.snap tfoot td.pos { color: var(--pos); }
 .summary.sfc-payout.snap tbody td.neg, .summary.sfc-payout.snap tfoot td.neg { color: var(--neg); }
 /* Measure | Bid switch on the measurements screen */
@@ -590,32 +590,32 @@ body {
 .sfc-form td.cost { white-space: normal; }
 /* Matrix column boxes: payout (ACV+RCV together), contracted, SFC cost, margin */
 .summary.sfc-payout.snap { border-collapse: collapse; }
-.summary.sfc-payout.snap thead tr:first-child th:nth-child(3),
 .summary.sfc-payout.snap thead tr:first-child th:nth-child(4),
 .summary.sfc-payout.snap thead tr:first-child th:nth-child(5),
 .summary.sfc-payout.snap thead tr:first-child th:nth-child(6),
-.summary.sfc-payout.snap thead tr:first-child th:nth-child(7) { border-left: 2px solid #000; }
-.summary.sfc-payout.snap thead tr:first-child th:nth-child(7) { border-right: 2px solid #000; }
-.summary.sfc-payout.snap thead tr:first-child th:nth-child(3) { border-top: 2px solid #000; }
-.summary.sfc-payout.snap thead tr:first-child th:nth-child(4),
+.summary.sfc-payout.snap thead tr:first-child th:nth-child(7),
+.summary.sfc-payout.snap thead tr:first-child th:nth-child(8) { border-left: 2px solid #000; }
+.summary.sfc-payout.snap thead tr:first-child th:nth-child(8) { border-right: 2px solid #000; }
+.summary.sfc-payout.snap thead tr:first-child th:nth-child(4) { border-top: 2px solid #000; }
 .summary.sfc-payout.snap thead tr:first-child th:nth-child(5),
 .summary.sfc-payout.snap thead tr:first-child th:nth-child(6),
-.summary.sfc-payout.snap thead tr:first-child th:nth-child(7) { border-top: 2px solid #000; }
+.summary.sfc-payout.snap thead tr:first-child th:nth-child(7),
+.summary.sfc-payout.snap thead tr:first-child th:nth-child(8) { border-top: 2px solid #000; }
 .summary.sfc-payout.snap thead tr:last-child th:first-child { border-left: 2px solid #000; }
 .summary.sfc-payout.snap thead tr:last-child th:last-child { border-right: 2px solid #000; }
 .summary.sfc-payout.snap thead th.group { border-bottom: 1px solid var(--rule); }
-.summary.sfc-payout.snap tbody td:nth-child(3),
-.summary.sfc-payout.snap tbody td:nth-child(5),
+.summary.sfc-payout.snap tbody td:nth-child(4),
 .summary.sfc-payout.snap tbody td:nth-child(6),
 .summary.sfc-payout.snap tbody td:nth-child(7),
 .summary.sfc-payout.snap tbody td:nth-child(8),
-.summary.sfc-payout.snap tfoot td:nth-child(3),
-.summary.sfc-payout.snap tfoot td:nth-child(5),
+.summary.sfc-payout.snap tbody td:nth-child(9),
+.summary.sfc-payout.snap tfoot td:nth-child(4),
 .summary.sfc-payout.snap tfoot td:nth-child(6),
 .summary.sfc-payout.snap tfoot td:nth-child(7),
-.summary.sfc-payout.snap tfoot td:nth-child(8) { border-left: 2px solid #000; }
-.summary.sfc-payout.snap tbody td:nth-child(8),
-.summary.sfc-payout.snap tfoot td:nth-child(8) { border-right: 2px solid #000; }
+.summary.sfc-payout.snap tfoot td:nth-child(8),
+.summary.sfc-payout.snap tfoot td:nth-child(9) { border-left: 2px solid #000; }
+.summary.sfc-payout.snap tbody td:nth-child(9),
+.summary.sfc-payout.snap tfoot td:nth-child(9) { border-right: 2px solid #000; }
 .summary.sfc-payout.snap tfoot td { border-bottom: 2px solid #000; }
 .summary.sfc-payout.snap thead th { border-bottom: 2px solid #000; }
 .summary.sfc-payout.snap thead tr:first-child th[rowspan] { border-bottom: 2px solid #000; }
@@ -1169,3 +1169,9 @@ body.sfc-open { overflow: hidden; }
 .sfc-flow-pair { display: flex; flex-wrap: wrap; gap: 10px 32px; margin-bottom: 6px; }
 .sfc-flow-k { font-size: 14px; font-weight: 600; color: var(--ink-soft); min-width: 140px; }
 .sfc-form td.cost .sfc-cost-note { display: block; font-size: 11.5px; font-weight: 600; color: var(--neg); margin-top: 2px; }
+/* Supplement status: dropdown left of the trade on Pricing; plain text on the snapshot */
+.sfc-form th.supp, .sfc-form td.supp { width: 168px; padding-left: 4px; }
+.sfc-form .sfc-supp { width: 100%; min-width: 0; height: 38px; font-size: 12px; font-weight: 700; letter-spacing: 0.03em; text-align: left; padding: 0 8px; }
+.sfc-upgrades-6 th.trade, .sfc-upgrades-6 td.trade { width: 15%; }
+.snap td.supp, .snap th.supp { font-size: 9.5px; font-weight: 700; letter-spacing: 0.04em; white-space: nowrap; width: 84px; color: var(--ink-soft); }
+.sfc-flow-gate { margin: 4px 0 16px; font-size: 14px; }

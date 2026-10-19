@@ -1514,6 +1514,25 @@ const PRICE_LIST_DEFAULT = {
       { key: "iws", label: "Full IWS", unit: "SQ", price: 80, cost: 40, qtyFrom: "total" },
     ],
   },
+  // Gutters: cost per LF of gutter + downspout by material, plus adders for 6" and painting.
+  GUTTERS: {
+    types: [{ key: "steel", label: "Steel", cost: 10 }, { key: "aluminum", label: "Aluminum", cost: 6 }],
+    sixInch: { cost: 1 },
+    paint: { cost: 1 },
+  },
+  // Siding: cost per SF for the types on the list; every other type needs management's bid.
+  SIDING: {
+    types: [
+      { key: "vinyl", label: "Vinyl (Standard)", cost: 5.5 },
+      { key: "hardie", label: "Hardie Board", cost: 9.5 },
+      { key: "lp", label: "LP SmartSide (engineered wood)", bid: true },
+      { key: "wood", label: "Wood / cedar", bid: true },
+      { key: "steel", label: "Steel / metal siding", bid: true },
+      { key: "boardbatten", label: "Board & batten", bid: true },
+      { key: "stone", label: "Stone / brick veneer", bid: true },
+      { key: "other", label: "Other", bid: true },
+    ],
+  },
 };
 const priceListClone = () => JSON.parse(JSON.stringify(PRICE_LIST_DEFAULT));
 // Saved overrides (numbers only) laid over the defaults, so new list entries show up later.
@@ -1524,6 +1543,12 @@ function priceListApply(base, o) {
   if (R.steep) { base.ROOF.steep.fromPitch = num(R.steep.fromPitch, base.ROOF.steep.fromPitch); base.ROOF.steep.cost = num(R.steep.cost, base.ROOF.steep.cost); }
   if (R.redecking) base.ROOF.redecking.cost = num(R.redecking.cost, base.ROOF.redecking.cost);
   for (const u of base.ROOF.upgrades) { const x = R.upgrades && R.upgrades[u.key]; if (x) { u.price = num(x.price, u.price); if (!u.classKey) u.cost = num(x.cost, u.cost); } }
+  const G = o.GUTTERS || {};
+  for (const t of base.GUTTERS.types) if (G.types && G.types[t.key] != null) t.cost = num(G.types[t.key], t.cost);
+  if (G.sixInch) base.GUTTERS.sixInch.cost = num(G.sixInch.cost, base.GUTTERS.sixInch.cost);
+  if (G.paint) base.GUTTERS.paint.cost = num(G.paint.cost, base.GUTTERS.paint.cost);
+  const S = o.SIDING || {};
+  for (const t of base.SIDING.types) if (!t.bid && S.types && S.types[t.key] != null) t.cost = num(S.types[t.key], t.cost);
 }
 function priceListLoad() {
   const base = priceListClone();
@@ -1535,6 +1560,11 @@ function priceListOverrides(L) {
     shingles: Object.fromEntries(L.ROOF.shingles.map((sh) => [sh.key, sh.cost])),
     steep: { ...L.ROOF.steep }, redecking: { ...L.ROOF.redecking },
     upgrades: Object.fromEntries(L.ROOF.upgrades.map((u) => [u.key, u.classKey ? { price: u.price } : { price: u.price, cost: u.cost }])),
+  }, GUTTERS: {
+    types: Object.fromEntries(L.GUTTERS.types.map((t) => [t.key, t.cost])),
+    sixInch: { ...L.GUTTERS.sixInch }, paint: { ...L.GUTTERS.paint },
+  }, SIDING: {
+    types: Object.fromEntries(L.SIDING.types.filter((t) => !t.bid).map((t) => [t.key, t.cost])),
   } };
 }
 let priceList = priceListLoad();
@@ -1591,6 +1621,53 @@ function sfcRoofCost() {
   const cost = parts.reduce((a, p) => a + p.cost, 0);
   return { sq, steepSq, redeckSq, parts, cost, perSq: sq > 0 ? cost / sq : null };
 }
+// ---- gutters: type › LF of gutters + downspouts › 5" or 6" › paint ----
+const sfcGutterDefaults = () => ({ type: null, gutterLf: null, downLf: null, size: null, paint: null });
+function sfcGutterCost() {
+  const L = priceList.GUTTERS, g = sfc.gutters || sfcGutterDefaults();
+  const t = L.types.find((x) => x.key === g.type);
+  if (!t || !g.size || g.paint == null) return null;
+  const qty = Math.round(((Number(g.gutterLf) || 0) + (Number(g.downLf) || 0)) * 100) / 100;
+  if (!(qty > 0)) return null;
+  const rate = t.cost + (g.size === "6" ? L.sixInch.cost : 0) + (g.paint ? L.paint.cost : 0);
+  return { qty, rate, cost: qty * rate, parts: [{ label: `${t.label} ${g.size}" gutters${g.paint ? ", painted" : ""}`, qty, rate, cost: qty * rate }] };
+}
+// ---- siding: type(s) › SF per type (+ management's cost for types not on the list) ----
+const sfcSidingDefaults = () => ({ types: [] }); // [{ key, sf, bid }]
+const sidingTypeSpec = (key) => priceList.SIDING.types.find((t) => t.key === key) || { key, label: key, bid: true };
+const sfcSidingTypes = () => ((sfc.siding && sfc.siding.types) || []);
+const sfcSidingNeedsBid = () => sfcSidingTypes().some((t) => sidingTypeSpec(t.key).bid);
+const sfcSidingBidMissing = () => sfcSidingTypes().some((t) => sidingTypeSpec(t.key).bid && !(Number(t.bid) > 0));
+const sfcSidingTotalSf = () => Math.round(sfcSidingTypes().reduce((a, t) => a + Math.max(0, Number(t.sf) || 0), 0) * 100) / 100;
+function sfcSidingCost() {
+  if (sfcSidingBidMissing()) return null;
+  const parts = [];
+  for (const t of sfcSidingTypes()) {
+    const spec = sidingTypeSpec(t.key), sf = Math.max(0, Number(t.sf) || 0);
+    if (spec.bid) { if (Number(t.bid) > 0) parts.push({ key: t.key, label: spec.label, qty: sf, rate: null, cost: Number(t.bid) }); }
+    else if (sf > 0) parts.push({ key: t.key, label: spec.label, qty: sf, rate: spec.cost, cost: sf * spec.cost });
+  }
+  if (!parts.length) return null;
+  const qty = sfcSidingTotalSf();
+  return { qty, cost: parts.reduce((a, p) => a + p.cost, 0), parts };
+}
+// ---- every other priceable trade: bid pricing only — quantity + management's estimated cost ----
+function sfcBidCost(trade) {
+  const b = Number(sfc.bids[trade]) || 0;
+  return b > 0 ? { qty: Number(sfc.measurements[trade]) || null, cost: b, parts: [] } : null;
+}
+// The SFC cost of a trade from its assumptions: { qty, cost, parts } or null while unpriced.
+function sfcTradeCost(trade) {
+  if (sfcIsClaimOnly(trade)) return null;
+  if (trade === "ROOF") { const rc = sfcRoofCost(); return rc ? { qty: rc.sq, cost: rc.cost, parts: rc.parts } : null; }
+  if (trade === "GUTTERS") return sfcGutterCost();
+  if (trade === "SIDING") return sfcSidingCost();
+  return sfcBidCost(trade);
+}
+// Supplement status, shown left of every trade on Pricing and the Price Snapshot.
+const SFC_SUPP_OPTIONS = ["WORK DOING", "WORK NOT DOING", "SUPP. DEPENDING"];
+const sfcSuppStatus = (trade, c) => sfc.supp[trade] || (c && c.rcv > 0 ? "WORK DOING" : "WORK NOT DOING");
+
 // Upgrades picked from the list carry a key + quantity; price and cost are computed from the
 // list every time they are read, so a price-list edit flows through automatically.
 function sfcUpgradeSpec(u) { const L = priceList[u.trade]; return u.key && L ? L.upgrades.find((x) => x.key === u.key) || null : null; }
@@ -1611,21 +1688,11 @@ let sfc = {
   rates: null, credits: {}, deductible: null, step: 0, itemsRef: null,
   upgrades: [], marketingCredits: [],
   roof: { types: [], steepSq: null, walkSq: null, redeck: false, redeckSq: null }, // roof assumptions (own step)
+  gutters: { type: null, gutterLf: null, downLf: null, size: null, paint: null },
+  siding: { types: [] },
+  supp: {}, // trade -> supplement status
 };
 let sfcSeq = 1;
-
-function sfcIsBid(trade) {
-  return SFC_BID_TRADES.has(trade) || !sfcRateFor(trade);
-}
-// How a trade is priced: "list" (the price list — the only option besides bid for trades that
-// have one), "measure" (history rate × measurement) or "bid" (typed cost). The default is the
-// list where there is one, bid for the bid trades and for any trade with no usable history.
-function sfcMode(trade) {
-  const m = sfc.mode[trade];
-  if (sfcHasPriceList(trade)) return "list"; // ROOF: it is just the cost from Assumptions
-  if (m === "measure" || m === "bid") return m;
-  return sfcIsBid(trade) ? "bid" : "measure";
-}
 
 // "28.40 SQ" / "1,234.5 SF" → { value, unit }; null when the quantity has no unit.
 function parseQuantity(q) {
@@ -1633,33 +1700,11 @@ function parseQuantity(q) {
   if (!m) return null;
   return { value: Number(m[1].replace(/,/g, "")), unit: m[2].toUpperCase() };
 }
-// Largest quantity in the trade's unit among its lines — a suggestion the form can overwrite.
-function suggestMeasurement(items, uom) {
-  let best = 0;
-  for (const it of items) {
-    const q = parseQuantity(it.quantity);
-    if (q && q.unit === uom && q.value > best) best = q.value;
-  }
-  return best || null;
-}
-async function fetchLivePricing() {
-  if (sfc.pricing) return sfc.pricing;
-  const res = await fetch(`${BACKEND_URL}/api/analytics/live-pricing?population=all&window=all`);
-  if (!res.ok) throw new Error(`Pricing service error (${res.status}).`);
-  sfc.pricing = await res.json();
-  return sfc.pricing;
-}
 // Every trade on the claim that carries RCV, in summary order.
 function sfcTradeGroups() {
   return groupByTrade(state.items).filter((g) => g.rcv > 0);
 }
 const sfcIsClaimOnly = (trade) => !SFC_TRADE_UOM[trade];
-// Live Pricing row for a trade, or null when the history is too thin to price from.
-function sfcRateFor(trade) {
-  const t = ((sfc.pricing && sfc.pricing.trades) || []).find((x) => x.trade === trade);
-  if (!t || t.n < SFC_MIN_JOBS || t.cost.median == null) return null;
-  return t;
-}
 const fmtRate = (n) => {
   if (n == null) return "—";
   const digits = Math.abs(n) < 20 ? 2 : 0;
@@ -1727,23 +1772,12 @@ function sfcPriceRows() {
       const upCost = ups.reduce((a, u) => a + (Number(u.cost) || 0), 0);
       const contracted = c.rcv + upPrice;
       const uom = SFC_TRADE_UOM[g.trade];
-      const roofList = g.trade === "ROOF" && sfcMode("ROOF") === "list" ? sfcRoofCost() : null;
-      const meas = roofList ? roofList.sq : sfc.measurements[g.trade];
+      const tc = c.rcv > 0 ? sfcTradeCost(g.trade) : null; // from the trade's Assumptions step
+      const meas = tc && tc.qty > 0 ? tc.qty : sfc.measurements[g.trade];
       let cost = null, priced = false;
       if (c.rcv > 0 && !sfcIsClaimOnly(g.trade)) {
-        if (sfcMode(g.trade) === "list") {
-          priced = !!roofList; // price list: cost from the roof assumptions
-          cost = priced ? roofList.cost + upCost : null;
-        } else if (sfcMode(g.trade) === "bid") {
-          const bid = sfc.bids[g.trade];
-          priced = bid != null && bid > 0;
-          cost = priced ? bid + upCost : null;
-        } else {
-          const rate = sfcRateFor(g.trade);
-          const perUnit = rate ? (sfc.unlocked[g.trade] && sfc.rateEdits[g.trade] != null ? sfc.rateEdits[g.trade] : rate.cost.median) : null;
-          priced = perUnit != null && meas != null && meas > 0;
-          cost = priced ? perUnit * meas + upCost : null;
-        }
+        priced = !!tc;
+        cost = priced ? tc.cost + upCost : null;
       } else if (ups.length && upCost > 0) {
         priced = true; cost = upCost;
       }
@@ -1780,16 +1814,27 @@ function sfcMoney(rows) {
 }
 
 // ---- flow ----
-// Steps: 0..n-1 trade screens, n roof assumptions, n+1 pricing, n+2 estimate.
-const sfcStepCount = () => sfcTradeGroups().length + 3;
+// Steps: one credit screen per trade, one assumptions page per trade we are contracting
+// (claim-only and fully credited trades get none), pricing, estimate.
+function sfcAssumeTrades() {
+  return sfcTradeGroups().filter((g) => !sfcIsClaimOnly(g.trade) && sfcContracted(g).rcv > 0);
+}
+function sfcSteps() {
+  const trades = sfcTradeGroups().map((g) => ({ kind: "trade", g }));
+  const assume = sfcAssumeTrades().map((g) => ({ kind: "assume", g }));
+  if (!assume.length) assume.push({ kind: "assume", g: null });
+  return [...trades, ...assume, { kind: "pricing" }, { kind: "estimate" }];
+}
+const sfcStepIndex = (kind) => sfcSteps().findIndex((st) => st.kind === kind);
 async function openSfcEstimate() {
   if (!state.items.length) return setStatus("Nothing to estimate yet — upload a PDF first.", "error");
   const groups = sfcTradeGroups();
   if (!groups.length) return setStatus("No line items carry RCV yet.", "error");
   if (sfc.itemsRef !== state.items) {
     sfc.itemsRef = state.items;
-    sfc.credits = {}; sfc.measurements = {}; sfc.bids = {}; sfc.unlocked = {}; sfc.rateEdits = {}; sfc.mode = {};
-    sfc.deductible = null; sfc.client = ""; sfc.upgrades = []; sfc.marketingCredits = []; sfc.roof = sfcRoofDefaults();
+    sfc.credits = {}; sfc.measurements = {}; sfc.bids = {}; sfc.supp = {};
+    sfc.deductible = null; sfc.client = ""; sfc.upgrades = []; sfc.marketingCredits = [];
+    sfc.roof = sfcRoofDefaults(); sfc.gutters = sfcGutterDefaults(); sfc.siding = sfcSidingDefaults();
   }
   if (!sfc.client && state.jobInfo && state.jobInfo.contact_name) sfc.client = state.jobInfo.contact_name;
   const md = state.summary || {};
@@ -1798,15 +1843,7 @@ async function openSfcEstimate() {
   document.getElementById("sfcModal").hidden = false;
   document.body.classList.add("sfc-open");
   sfcBarMode("trade");
-  const body = document.getElementById("sfcBody");
-  body.innerHTML = `<p class="sfc-note">Pulling SFC pricing…</p>`;
-  try {
-    await fetchLivePricing();
-  } catch (e) {
-    body.innerHTML = `<p class="sfc-note sfc-error">${esc(e.message || "Could not reach the pricing service.")}</p>`;
-    return;
-  }
-  // Measurements are never pre-filled from the claim — the estimator types every one.
+  // Costs come from the price list + each trade's assumptions; nothing is pre-filled.
   sfc.step = 0;
   renderSfcStep();
 }
@@ -1816,7 +1853,6 @@ function closeSfcModal() {
 }
 // Step bar in the header: Trades · Pricing · ACV credits · Estimate (earlier steps clickable).
 function sfcBarMode(mode) {
-  const n = sfcTradeGroups().length;
   const cur = mode === "trade" ? 0 : mode === "assume" ? 1 : mode === "pricing" ? 2 : 3;
   const labels = ["Trades", "Assumptions", "Pricing", "Estimate"];
   const bar = document.getElementById("sfcSteps");
@@ -1826,8 +1862,7 @@ function sfcBarMode(mode) {
       .join('<span class="sfc-stepsep">›</span>');
     for (const b of bar.querySelectorAll(".sfc-stepbtn:not([disabled])")) {
       b.addEventListener("click", () => {
-        const i = Number(b.dataset.step);
-        sfc.step = i === 0 ? 0 : i === 1 ? n : i === 2 ? n + 1 : n + 2;
+        sfc.step = sfcStepIndex(["trade", "assume", "pricing", "estimate"][Number(b.dataset.step)]);
         renderSfcStep();
       });
     }
@@ -1837,13 +1872,18 @@ function sfcBarMode(mode) {
   document.getElementById("sfcUomBtn").setAttribute("aria-pressed", String(sfc.perUnit));
 }
 function renderSfcStep() {
-  const n = sfcTradeGroups().length;
-  sfc.step = Math.max(0, Math.min(sfc.step, n + 2));
+  const steps = sfcSteps();
+  sfc.step = Math.max(0, Math.min(sfc.step, steps.length - 1));
+  const st = steps[sfc.step];
   document.getElementById("sfcModal").querySelector(".modal-body").scrollTop = 0;
-  document.getElementById("sfcBody").classList.toggle("sfc-work", sfc.step < n + 2);
-  if (sfc.step < n) { sfcBarMode("trade"); renderSfcTrade(sfcTradeGroups()[sfc.step], sfc.step, n); }
-  else if (sfc.step === n) { sfcBarMode("assume"); renderSfcAssumptions(); }
-  else if (sfc.step === n + 1) { sfcBarMode("pricing"); renderSfcPricing(); }
+  document.getElementById("sfcBody").classList.toggle("sfc-work", st.kind !== "estimate");
+  if (st.kind === "trade") {
+    const n = sfcTradeGroups().length;
+    sfcBarMode("trade"); renderSfcTrade(st.g, sfc.step, n);
+  } else if (st.kind === "assume") {
+    const all = steps.filter((x) => x.kind === "assume");
+    sfcBarMode("assume"); renderSfcAssumptions(st.g, all.indexOf(st) + 1, all.length);
+  } else if (st.kind === "pricing") { sfcBarMode("pricing"); renderSfcPricing(); }
   else { sfcBarMode("estimate"); renderSfcEstimate(); }
 }
 // Shared nav bar on the working screens.
@@ -1896,7 +1936,7 @@ function renderSfcTrade(g, idx, n) {
       </div>`;
   document.getElementById("sfcBody").innerHTML = sfcNavHTML({
     step: `Trade ${idx + 1} of ${n}`, trade: g.trade, color: g.color, right: toggle, prevDisabled: idx === 0,
-    nextLabel: idx + 1 < n ? "Next →" : "Pricing →",
+    nextLabel: idx + 1 < n ? "Next →" : "Assumptions →",
   }) + `
     <table class="sfc-lines">
       <thead><tr>
@@ -1932,19 +1972,23 @@ function renderSfcTrade(g, idx, n) {
   sfcWireNav();
 }
 
-// ---- step: pricing ----
-// ---- step: roof assumptions — type(s) › squares per type › pitch › redecking ----
-// No rates are shown here: the production manager states what the roof IS; the price list
-// prices it. Tile / metal / modbit anywhere on the roof → bid required before pricing.
-function renderSfcAssumptions() {
+// ---- step: assumptions — one page per trade we are contracting ----
+// No rates are shown on any of them: the production manager states what the work IS; the
+// price list prices it. Anything not on the list takes management's estimated cost and the
+// walk cannot move on until it is typed.
+function renderSfcAssumptions(g, pos, count) {
   const body = document.getElementById("sfcBody");
-  const roofG = sfcTradeGroups().find((g) => g.trade === "ROOF");
-  const nav = sfcNavHTML({ step: "Assumptions", trade: "Roof", color: TRADE_COLORS.ROOF || "#2563eb" });
-  if (!roofG) {
-    body.innerHTML = nav + `<p class="sfc-note">No roof on this claim — nothing to assume. Continue to pricing.</p>`;
+  if (!g) {
+    body.innerHTML = sfcNavHTML({ step: "Assumptions", trade: "Nothing to price" }) +
+      `<p class="sfc-note">Every trade on this claim is credited or claim-only — nothing to assume. Continue to pricing.</p>`;
     sfcWireNav();
     return;
   }
+  const nav = sfcNavHTML({ step: `Assumptions ${pos} of ${count}`, trade: g.trade, color: g.color });
+  if (g.trade === "GUTTERS") return renderGutterAssumptions(body, nav);
+  if (g.trade === "SIDING") return renderSidingAssumptions(body, nav);
+  if (g.trade !== "ROOF") return renderBidAssumptions(body, nav, g);
+  // ROOF: type(s) › squares per type › pitch › redecking
   const r = sfc.roof;
   const L = priceList.ROOF;
   const needsBid = sfcRoofNeedsBid();
@@ -2059,75 +2103,194 @@ function renderSfcAssumptions() {
   sfcWireNav(snapshot, snapshot);
 }
 
+// ---- gutters: type › LF › size › paint. Super simple. ----
+function renderGutterAssumptions(body, nav) {
+  const g = sfc.gutters;
+  const L = priceList.GUTTERS;
+  const lf = Math.round(((Number(g.gutterLf) || 0) + (Number(g.downLf) || 0)) * 100) / 100;
+  const ready = !!sfcGutterCost();
+  const seg = (cls, opts, cur) => `<span class="sfc-mode" role="group">${opts.map(([v, label]) =>
+    `<button type="button" class="sfc-mode-btn ${cls}" data-v="${esc(v)}" aria-pressed="${cur === v}">${esc(label)}</button>`).join("")}</span>`;
+  const missing = [];
+  if (!g.type) missing.push("gutter type");
+  if (!(lf > 0)) missing.push("linear feet");
+  if (!g.size) missing.push("size");
+  if (g.paint == null) missing.push("paint");
+  body.innerHTML = nav + `
+    <ol class="sfc-flow">
+      <li class="sfc-flow-step"><div class="sfc-flow-n">1</div><div class="sfc-flow-body">
+        <p class="sfc-flow-title">Gutter type</p>
+        <span class="sfc-field sfc-flow-field">${seg("sfc-gt-type", L.types.map((t) => [t.key, t.label]), g.type)}</span>
+      </div></li>
+      <li class="sfc-flow-step"><div class="sfc-flow-n">2</div><div class="sfc-flow-body">
+        <p class="sfc-flow-title">Linear feet</p>
+        <p class="sfc-flow-hint">Gutters and downspouts separately.</p>
+        <div class="sfc-flow-pair">
+          <label class="sfc-flow-field"><span class="sfc-flow-k">Gutters</span><input id="sfcGtLf" class="input" type="number" min="0" step="0.01" inputmode="decimal" value="${g.gutterLf != null ? esc(g.gutterLf) : ""}" placeholder="0" /><span class="uom">LF</span></label>
+          <label class="sfc-flow-field"><span class="sfc-flow-k">Downspouts</span><input id="sfcGtDown" class="input" type="number" min="0" step="0.01" inputmode="decimal" value="${g.downLf != null ? esc(g.downLf) : ""}" placeholder="0" /><span class="uom">LF</span></label>
+        </div>
+        <div class="sfc-as-total">Total <b>${esc(lf)} LF</b></div>
+      </div></li>
+      <li class="sfc-flow-step"><div class="sfc-flow-n">3</div><div class="sfc-flow-body">
+        <p class="sfc-flow-title">Gutter size</p>
+        <span class="sfc-field sfc-flow-field">${seg("sfc-gt-size", [["5", '5 inch'], ["6", '6 inch']], g.size)}</span>
+      </div></li>
+      <li class="sfc-flow-step"><div class="sfc-flow-n">4</div><div class="sfc-flow-body">
+        <p class="sfc-flow-title">Paint needed?</p>
+        <span class="sfc-field sfc-flow-field">${seg("sfc-gt-paint", [["1", "Yes"], ["0", "No"]], g.paint == null ? null : g.paint ? "1" : "0")}</span>
+      </div></li>
+    </ol>
+    ${ready ? "" : `<p class="sfc-as-flag on sfc-flow-gate">Select ${esc(missing.join(", "))} to continue.</p>`}`;
+  document.getElementById("sfcNextBtn").disabled = !ready;
+  const snapshot = () => {
+    const a = document.getElementById("sfcGtLf"), b = document.getElementById("sfcGtDown");
+    g.gutterLf = Number(a.value) > 0 ? Number(a.value) : null;
+    g.downLf = Number(b.value) > 0 ? Number(b.value) : null;
+    const c = sfcGutterCost();
+    sfc.measurements.GUTTERS = c ? c.qty : (Math.round(((g.gutterLf || 0) + (g.downLf || 0)) * 100) / 100 || null);
+  };
+  const rerender = () => { snapshot(); renderGutterAssumptions(body, nav); };
+  for (const el of document.querySelectorAll("#sfcGtLf, #sfcGtDown")) el.addEventListener("change", rerender);
+  for (const btn of document.querySelectorAll(".sfc-gt-type")) btn.addEventListener("click", () => { snapshot(); g.type = btn.dataset.v; renderGutterAssumptions(body, nav); });
+  for (const btn of document.querySelectorAll(".sfc-gt-size")) btn.addEventListener("click", () => { snapshot(); g.size = btn.dataset.v; renderGutterAssumptions(body, nav); });
+  for (const btn of document.querySelectorAll(".sfc-gt-paint")) btn.addEventListener("click", () => { snapshot(); g.paint = btn.dataset.v === "1"; renderGutterAssumptions(body, nav); });
+  sfcWireNav(snapshot, snapshot);
+}
+
+// ---- siding: type(s) › SF per type; types off the list take management's estimated cost ----
+function renderSidingAssumptions(body, nav) {
+  const sd = sfc.siding;
+  const L = priceList.SIDING;
+  const needsBid = sfcSidingNeedsBid();
+  const bidMissing = sfcSidingBidMissing();
+  const total = sfcSidingTotalSf();
+  const used = new Set(sd.types.map((t) => t.key));
+  const ready = total > 0 && !bidMissing;
+  const typeRows = sd.types.map((t, i) => {
+    const spec = sidingTypeSpec(t.key);
+    return `
+      <tr data-i="${i}">
+        <td class="trade"><span class="trade-cell">${esc(spec.label)}</span>${spec.bid ? `<span class="sfc-bid-tag">not on price list</span>` : ""}</td>
+        <td class="num sqc"><span class="sfc-field"><input class="input sfc-sd-sf" type="number" min="0" step="0.01" inputmode="decimal" data-i="${i}"
+            value="${t.sf != null ? esc(t.sf) : ""}" placeholder="0" /><span class="uom">SF</span></span></td>
+        ${needsBid ? `<td class="num bidc">${spec.bid ? `<span class="sfc-field"><span class="pl-cur">$</span><input class="input sfc-sd-bid${Number(t.bid) > 0 ? "" : " missing"}" type="number" min="0" step="1" inputmode="decimal" data-i="${i}"
+            value="${t.bid != null ? esc(t.bid) : ""}" placeholder="0" title="Estimated cost from management" /></span>` : ""}</td>` : ""}
+        <td class="check"><button type="button" class="btn btn-ghost btn-lock sfc-sd-del" data-i="${i}" title="Remove">✕</button></td>
+      </tr>`;
+  }).join("");
+  const listed = L.types.filter((t) => !t.bid && !used.has(t.key)), bids = L.types.filter((t) => t.bid && !used.has(t.key));
+  const pick = `
+      <select id="sfcSidingTypePick" class="input sfc-up-pick" aria-label="Add siding type">
+        <option value="">＋ Add siding type…</option>
+        ${listed.map((t) => `<option value="${esc(t.key)}">${esc(t.label)}</option>`).join("")}
+        ${bids.length ? `<optgroup label="Requires bid">${bids.map((t) => `<option value="${esc(t.key)}">${esc(t.label)} — requires bid</option>`).join("")}</optgroup>` : ""}
+      </select>`;
+  body.innerHTML = nav + `
+    <ol class="sfc-flow">
+      <li class="sfc-flow-step"><div class="sfc-flow-n">1</div><div class="sfc-flow-body">
+        <p class="sfc-flow-title">Type of siding</p>
+        <p class="sfc-flow-hint">Select every siding type on the house — more than one is unusual, but it happens.</p>
+        <div class="sfc-flow-chips">${sd.types.map((t) => `<span class="sfc-chip${sidingTypeSpec(t.key).bid ? " bid" : ""}">${esc(sidingTypeSpec(t.key).label)}</span>`).join("")}</div>
+        ${pick}
+      </div></li>
+      <li class="sfc-flow-step${sd.types.length ? "" : " off"}"><div class="sfc-flow-n">2</div><div class="sfc-flow-body">
+        <p class="sfc-flow-title">Square feet per siding type</p>
+        ${sd.types.length ? `
+        <table class="sfc-form sfc-rooftypes${needsBid ? " has-bid" : ""}">
+          <thead><tr><th class="trade">Siding type</th><th class="num sqc">Square feet</th>${needsBid ? `<th class="num bidc">Estimated cost</th>` : ""}<th class="check"></th></tr></thead>
+          <tbody>${typeRows}</tbody>
+        </table>
+        <div class="sfc-as-total">Total siding <b>${esc(total)} SF</b></div>` : `<p class="sfc-flow-hint">Add a siding type first.</p>`}
+      </div></li>
+    </ol>
+    ${needsBid ? `
+    <div class="sfc-bid-banner">
+      <b>${esc(sd.types.filter((t) => sidingTypeSpec(t.key).bid).map((t) => sidingTypeSpec(t.key).label).join(" & ").toUpperCase())} NOT ON PRICE LIST CURRENTLY; ASK MANAGEMENT FOR ESTIMATED COSTS</b>
+      <span>${bidMissing ? "Enter the estimated cost next to the siding type above to continue." : "Estimated cost entered — the siding prices with it."}</span>
+    </div>` : ""}
+    ${!ready && !bidMissing ? `<p class="sfc-as-flag on sfc-flow-gate">Enter the square feet to continue.</p>` : ""}`;
+  document.getElementById("sfcNextBtn").disabled = !ready;
+  const snapshot = () => {
+    for (const inp of document.querySelectorAll(".sfc-sd-sf")) { const t = sd.types[Number(inp.dataset.i)]; if (t) { const v = Number(inp.value); t.sf = v > 0 ? v : null; } }
+    for (const inp of document.querySelectorAll(".sfc-sd-bid")) { const t = sd.types[Number(inp.dataset.i)]; if (t) { const v = Number(inp.value); t.bid = v > 0 ? v : null; } }
+    const sf = sfcSidingTotalSf();
+    sfc.measurements.SIDING = sf > 0 ? sf : null;
+  };
+  const rerender = () => { snapshot(); renderSidingAssumptions(body, nav); };
+  document.getElementById("sfcSidingTypePick").addEventListener("change", (e) => {
+    const key = e.target.value; if (!key) return;
+    snapshot(); sd.types.push({ key, sf: null, bid: null }); renderSidingAssumptions(body, nav);
+    const last = document.querySelector(".sfc-rooftypes tbody tr:last-child .sfc-sd-sf"); if (last) last.focus();
+  });
+  for (const el of document.querySelectorAll(".sfc-sd-sf, .sfc-sd-bid")) el.addEventListener("change", rerender);
+  for (const btn of document.querySelectorAll(".sfc-sd-del")) btn.addEventListener("click", () => { snapshot(); sd.types.splice(Number(btn.dataset.i), 1); renderSidingAssumptions(body, nav); });
+  sfcWireNav(snapshot, snapshot);
+}
+
+// ---- every other trade: bid pricing only — quantity + management's estimated cost ----
+function renderBidAssumptions(body, nav, g) {
+  const uom = SFC_TRADE_UOM[g.trade] || "EA";
+  const bid = sfc.bids[g.trade], qty = sfc.measurements[g.trade];
+  const ready = Number(bid) > 0;
+  body.innerHTML = nav + `
+    <ol class="sfc-flow">
+      <li class="sfc-flow-step"><div class="sfc-flow-n">1</div><div class="sfc-flow-body">
+        <p class="sfc-flow-title">Quantity</p>
+        <span class="sfc-field sfc-flow-field"><input id="sfcBidQty" class="input" type="number" min="0" step="0.01" inputmode="decimal" value="${qty != null ? esc(qty) : ""}" placeholder="0" /><span class="uom">${esc(uom)}</span></span>
+      </div></li>
+      <li class="sfc-flow-step"><div class="sfc-flow-n">2</div><div class="sfc-flow-body">
+        <p class="sfc-flow-title">Estimated cost</p>
+        <span class="sfc-field sfc-flow-field"><span class="pl-cur">$</span><input id="sfcBidCost" class="input sfc-rt-bid${ready ? "" : " missing"}" type="number" min="0" step="1" inputmode="decimal" value="${bid != null ? esc(bid) : ""}" placeholder="0" /></span>
+      </div></li>
+    </ol>
+    <div class="sfc-bid-banner">
+      <b>${esc(g.trade)} IS BID PRICING ONLY; ASK MANAGEMENT FOR ESTIMATED COSTS</b>
+      <span>${ready ? "Estimated cost entered — this trade prices with it." : "Enter the estimated cost above to continue."}</span>
+    </div>`;
+  document.getElementById("sfcNextBtn").disabled = !ready;
+  const snapshot = () => {
+    const q = Number(document.getElementById("sfcBidQty").value), b = Number(document.getElementById("sfcBidCost").value);
+    sfc.measurements[g.trade] = q > 0 ? q : null;
+    sfc.bids[g.trade] = b > 0 ? b : null;
+  };
+  const rerender = () => { snapshot(); renderBidAssumptions(body, nav, g); };
+  for (const el of document.querySelectorAll("#sfcBidQty, #sfcBidCost")) el.addEventListener("change", rerender);
+  sfcWireNav(snapshot, snapshot);
+}
+
 function renderSfcPricing() {
   const groups = sfcJobTrades();
-  const roofCost = sfcRoofCost();
   const rows = groups
     .map((g) => {
       const c = sfcContracted(g);
       const ups = sfcUpgradesFor(g.trade);
       const uom = SFC_TRADE_UOM[g.trade];
-      const rate = sfcRateFor(g.trade);
-      const meas = sfc.measurements[g.trade];
       const note =
         (c.credited ? `<span class="sfc-credited-note">${c.credited} line${c.credited === 1 ? "" : "s"} credited</span>` : "") +
         (ups.length ? `<span class="sfc-upgrade-note">${ups.length} upgrade${ups.length === 1 ? "" : "s"} +${fmtUSD(ups.reduce((a, u) => a + (Number(u.price) || 0), 0))}</span>` : "");
+      const supp = sfcSuppStatus(g.trade, c);
+      const suppCell = `<td class="supp"><select class="input sfc-supp" data-trade="${esc(g.trade)}" aria-label="Supplement status">${SFC_SUPP_OPTIONS.map((o) => `<option value="${esc(o)}" ${o === supp ? "selected" : ""}>${esc(o)}</option>`).join("")}</select></td>`;
       const tradeCell = `<td class="trade"><span class="trade-cell"><span class="trade-swatch" style="background:${g.color}"></span>${esc(g.trade)}</span>${note}</td>`;
       if (c.rcv <= 0) {
         return `
-      <tr class="sfc-claimonly">${tradeCell}<td class="num rcv">${fmtUSD(0)}</td><td class="num meas"></td>
+      <tr class="sfc-claimonly">${suppCell}${tradeCell}<td class="num rcv">${fmtUSD(0)}</td><td class="num meas"></td>
         <td class="cost"><span class="sfc-rate"><em>${ups.length ? "upgrades only" : "credited"}</em></span></td></tr>`;
       }
       if (sfcIsClaimOnly(g.trade)) {
         return `
-      <tr class="sfc-claimonly">${tradeCell}<td class="num rcv">${fmtUSD(c.rcv)}</td><td class="num meas"></td>
+      <tr class="sfc-claimonly">${suppCell}${tradeCell}<td class="num rcv">${fmtUSD(c.rcv)}</td><td class="num meas"></td>
         <td class="cost"><span class="sfc-rate"><em>claim only</em></span></td></tr>`;
       }
-      const mode = sfcMode(g.trade);
-      const modeSwitch = `<span class="sfc-mode" role="group" aria-label="Price by">
-          <button type="button" class="sfc-mode-btn sfc-mode-measure" data-trade="${esc(g.trade)}" aria-pressed="${mode === "measure"}">Measure</button>
-          <button type="button" class="sfc-mode-btn sfc-mode-bid" data-trade="${esc(g.trade)}" aria-pressed="${mode === "bid"}">Bid</button>
-        </span>`;
-      if (mode === "list") {
-        // ROOF: squares and cost come from the Assumptions step; upgrades add their SFC cost.
-        // No price-list / bid choice is offered — it is just the cost.
-        const rc = g.trade === "ROOF" ? roofCost : null;
-        const upCost = ups.reduce((a, u) => a + (Number(u.cost) || 0), 0);
-        return `
-      <tr>${tradeCell}
-        <td class="num rcv">${fmtUSD(c.rcv)}</td>
-        <td class="num meas"><span class="sfc-field"><span class="sfc-rate">${rc && rc.sq > 0 ? `<b>${esc(rc.sq)}</b>` : "<em>see Assumptions</em>"}</span><span class="uom">${esc(uom)}</span></span></td>
-        <td class="cost">${rc
-          ? `<span class="sfc-field"><span class="sfc-rate"><b>${fmtUSD(rc.cost + upCost)}</b></span></span>${upCost > 0 ? `<span class="sfc-cost-note">incl. upgrades +${fmtUSD(upCost)}</span>` : ""}`
-          : `<span class="sfc-field"><span class="sfc-rate"><em>${sfcRoofBidMissing() ? "estimated cost missing — see Assumptions" : "enter the roof squares on the Assumptions step"}</em></span></span>`}</td>
-      </tr>`;
-      }
-      const bid = mode === "bid";
-      const unlocked = !!sfc.unlocked[g.trade];
-      const median = rate ? Math.round(rate.cost.median * 100) / 100 : null;
-      const rateVal = sfc.rateEdits[g.trade] != null ? sfc.rateEdits[g.trade] : median;
-      const rateHTML = modeSwitch + (bid
-        ? `<span class="sfc-field"><input class="input sfc-bid" type="number" min="0" step="1" inputmode="decimal"
-                  data-trade="${esc(g.trade)}" value="${sfc.bids[g.trade] != null ? esc(sfc.bids[g.trade]) : ""}" placeholder="$" />
-           <span class="uom">bid</span></span>`
-        : !rate
-          ? `<span class="sfc-field"><span class="sfc-rate"><em>no SFC rate yet — use Bid</em></span></span>`
-          : unlocked
-            ? `<span class="sfc-field"><input class="input sfc-rate-in" type="number" min="0" step="0.01" inputmode="decimal"
-                    data-trade="${esc(g.trade)}" value="${esc(rateVal)}" />
-               <span class="uom">/ ${esc(uom)}</span>
-               <button type="button" class="btn btn-ghost btn-lock sfc-lock" data-trade="${esc(g.trade)}" title="Lock back to the median ${fmtRate(median)}">Lock</button></span>`
-            : `<span class="sfc-field"><span class="sfc-rate"><b>${fmtRate(median)}</b> / ${esc(uom)}</span>
-               <button type="button" class="btn btn-ghost btn-lock sfc-unlock" data-trade="${esc(g.trade)}" title="Unlock to type a different rate">Unlock</button></span>`);
+      // It is just the cost: the trade's Assumptions step plus its upgrades' SFC cost.
+      const tc = sfcTradeCost(g.trade);
+      const upCost = ups.reduce((a, u) => a + (Number(u.cost) || 0), 0);
       return `
-      <tr>${tradeCell}
+      <tr>${suppCell}${tradeCell}
         <td class="num rcv">${fmtUSD(c.rcv)}</td>
-        <td class="num meas"><span class="sfc-field">
-          <input class="input sfc-meas" type="number" min="0" step="0.01" inputmode="decimal"
-                 data-trade="${esc(g.trade)}" value="${meas != null ? esc(meas) : ""}" placeholder="0" />
-          <span class="uom">${esc(uom)}</span>
-        </span></td>
-        <td class="cost">${rateHTML}</td>
+        <td class="num meas"><span class="sfc-field"><span class="sfc-rate">${tc && tc.qty > 0 ? `<b>${esc(tc.qty)}</b>` : "<em>—</em>"}</span><span class="uom">${esc(uom)}</span></span></td>
+        <td class="cost">${tc
+          ? `<span class="sfc-field"><span class="sfc-rate"><b>${fmtUSD(tc.cost + upCost)}</b></span></span>${upCost > 0 ? `<span class="sfc-cost-note">incl. upgrades +${fmtUSD(upCost)}</span>` : ""}`
+          : `<span class="sfc-field"><span class="sfc-rate"><em>not priced — see Assumptions</em></span></span>`}</td>
       </tr>`;
     })
     .join("");
@@ -2185,7 +2348,7 @@ function renderSfcPricing() {
              value="${sfc.deductible != null ? esc(sfc.deductible) : ""}" placeholder="$" title="From the claim when stated; type it when the appraisal leaves it off" /></span></label>
     </div>
     <table class="sfc-form">
-      <thead><tr><th class="trade">Trade</th><th class="num rcv">Contracted RCV</th><th class="num meas">Measurement</th><th class="cost">SFC cost</th></tr></thead>
+      <thead><tr><th class="supp">Supp status</th><th class="trade">Trade</th><th class="num rcv">Contracted RCV</th><th class="num meas">Measurement</th><th class="cost">SFC cost</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
     <p class="section-label sfc-upgrades-label">Upgrades &amp; add-ons <span class="sfc-muted">roof upgrades are priced for you — type the quantity; custom upgrades take a typed price</span></p>
@@ -2202,10 +2365,7 @@ function renderSfcPricing() {
     <div class="sfc-upgrade-foot"><button type="button" id="sfcAddMarketing" class="btn btn-ghost">＋ Add marketing credit</button></div>`;
 
   const snapshot = () => {
-    for (const inp of document.querySelectorAll(".sfc-meas")) { const v = Number(inp.value); sfc.measurements[inp.dataset.trade] = v > 0 ? v : null; }
-    if (sfcMode("ROOF") === "list") { const rc = sfcRoofCost(); sfc.measurements.ROOF = rc ? rc.sq : null; }
-    for (const inp of document.querySelectorAll(".sfc-bid")) { const v = Number(inp.value); sfc.bids[inp.dataset.trade] = v > 0 ? v : null; }
-    for (const inp of document.querySelectorAll(".sfc-rate-in")) { const v = Number(inp.value); sfc.rateEdits[inp.dataset.trade] = v > 0 ? v : null; }
+    for (const sel of document.querySelectorAll(".sfc-supp")) sfc.supp[sel.dataset.trade] = sel.value;
     for (const u of sfc.upgrades) {
       const q = (cls) => document.querySelector(`.${cls}[data-id="${u.id}"]`);
       if (q("sfc-up-qty")) { const v = q("sfc-up-qty").value; u.qty = v === "" ? null : Math.max(0, Number(v) || 0); }
@@ -2226,15 +2386,6 @@ function renderSfcPricing() {
   };
   const rerender = () => { snapshot(); renderSfcPricing(); };
   for (const el of document.querySelectorAll(".sfc-up-qty")) el.addEventListener("change", rerender);
-  for (const btn of document.querySelectorAll(".sfc-mode-btn")) {
-    btn.addEventListener("click", () => {
-      snapshot();
-      sfc.mode[btn.dataset.trade] = btn.classList.contains("sfc-mode-bid") ? "bid" : btn.classList.contains("sfc-mode-list") ? "list" : "measure";
-      renderSfcPricing();
-    });
-  }
-  for (const btn of document.querySelectorAll(".sfc-unlock")) btn.addEventListener("click", () => { snapshot(); sfc.unlocked[btn.dataset.trade] = true; renderSfcPricing(); });
-  for (const btn of document.querySelectorAll(".sfc-lock")) btn.addEventListener("click", () => { snapshot(); sfc.unlocked[btn.dataset.trade] = false; sfc.rateEdits[btn.dataset.trade] = null; renderSfcPricing(); });
   document.getElementById("sfcUpgradePick").addEventListener("change", (e) => {
     const v = e.target.value; if (!v) return;
     snapshot();
@@ -2275,7 +2426,7 @@ function openPriceList() {
   const row = (label, cells) => `<tr><td class="pl-k">${label}</td>${cells}</tr>`;
   const inp = (cls, key, v, unit, step = 1) => `<td class="pl-v"><span class="sfc-field"><span class="pl-cur">$</span><input class="input ${cls}" type="number" min="0" step="${step}" inputmode="decimal" data-key="${esc(key)}" value="${esc(v)}" /><span class="uom">/ ${esc(unit)}</span></span></td>`;
   document.getElementById("priceListBody").innerHTML = `
-    <p class="disc-lead">Owner page. What roofing work costs SFC per square, and what each upgrade is charged at. Shingle roofs are priced at the base class; a class upgrade adds that class's cost difference. Saved in this browser and used by every estimate built here.</p>
+    <p class="disc-lead">Owner page. What the work costs SFC per unit, and what each upgrade is charged at. Shingle roofs are priced at the base class; a class upgrade adds that class's cost difference. Saved in this browser and used by every estimate built here.</p>
     <p class="section-label">Roof · SFC cost</p>
     <table class="disc-table pl-table"><tbody>
       ${L.ROOF.shingles.map((sh) => row(esc(sh.label), inp("pl-shingle", sh.key, sh.cost, "SQ"))).join("")}
@@ -2288,7 +2439,17 @@ function openPriceList() {
       <tbody>${L.ROOF.upgrades.map((u) => row(esc(u.label), inp("pl-up-price", u.key, u.price, u.unit) +
         (u.classKey ? `<td class="pl-v"><span class="sfc-muted">${fmtRate(sfcUpgradeUnitCost(u))} / SQ over base <em>(class cost − base)</em></span></td>`
           : u.costIn ? `<td class="pl-v"><span class="sfc-muted">in ${esc(u.costIn)}</span></td>` : inp("pl-up-cost", u.key, u.cost, u.unit)))).join("")}</tbody>
-    </table>`;
+    </table>
+    <p class="section-label">Gutters · SFC cost <span class="sfc-muted">per LF of gutter + downspout</span></p>
+    <table class="disc-table pl-table"><tbody>
+      ${L.GUTTERS.types.map((t) => row(`${esc(t.label)} (base)`, inp("pl-gt-type", t.key, t.cost, "LF", 0.01))).join("")}
+      ${row("6 inch adder", inp("pl-gt-six", "cost", L.GUTTERS.sixInch.cost, "LF", 0.01))}
+      ${row("Painting adder", inp("pl-gt-paint", "cost", L.GUTTERS.paint.cost, "LF", 0.01))}
+    </tbody></table>
+    <p class="section-label">Siding · SFC cost <span class="sfc-muted">per SF; every other type is bid</span></p>
+    <table class="disc-table pl-table"><tbody>
+      ${L.SIDING.types.map((t) => row(esc(t.label), t.bid ? `<td class="pl-v"><span class="sfc-muted">requires bid</span></td>` : inp("pl-sd-type", t.key, t.cost, "SF", 0.01))).join("")}
+    </tbody></table>`;
   document.getElementById("priceListModal").hidden = false;
 }
 function readPriceListForm() {
@@ -2300,6 +2461,10 @@ function readPriceListForm() {
   const rd = document.querySelector(".pl-redeck"); if (rd) L.ROOF.redecking.cost = n(rd, L.ROOF.redecking.cost);
   for (const el of document.querySelectorAll(".pl-up-price")) { const u = L.ROOF.upgrades.find((x) => x.key === el.dataset.key); if (u) u.price = n(el, u.price); }
   for (const el of document.querySelectorAll(".pl-up-cost")) { const u = L.ROOF.upgrades.find((x) => x.key === el.dataset.key); if (u) u.cost = n(el, u.cost); }
+  for (const el of document.querySelectorAll(".pl-gt-type")) { const t = L.GUTTERS.types.find((x) => x.key === el.dataset.key); if (t) t.cost = n(el, t.cost); }
+  const six = document.querySelector(".pl-gt-six"); if (six) L.GUTTERS.sixInch.cost = n(six, L.GUTTERS.sixInch.cost);
+  const pt = document.querySelector(".pl-gt-paint"); if (pt) L.GUTTERS.paint.cost = n(pt, L.GUTTERS.paint.cost);
+  for (const el of document.querySelectorAll(".pl-sd-type")) { const t = L.SIDING.types.find((x) => x.key === el.dataset.key); if (t) t.cost = n(el, t.cost); }
   return L;
 }
 function closePriceList() { document.getElementById("priceListModal").hidden = true; }
@@ -2465,6 +2630,7 @@ function renderSfcEstimate() {
   const pctCls = (pct) => (pct == null ? "" : pct >= SFC_TARGET_MARGIN ? "pos" : "neg");
   const snapRows = rows.map((x) => `
       <tr>
+        <td class="left supp">${esc(sfcSuppStatus(x.g.trade, x.c))}</td>
         <td class="left trade">${esc(x.g.trade)}${x.ups.map((u) => `<div class="snap-sub">– ${esc(u.description || "upgrade")} <span class="snap-up">+${money0(u.price)}</span></div>`).join("")}</td>
         <td class="center">${x.meas != null && x.uom ? `${esc(x.meas)} ${esc(x.uom)}` : ""}</td>
         <td class="sub">${x.payRCV > 0 ? cell(x.payACV, x) : "—"}</td>
@@ -2484,7 +2650,7 @@ function renderSfcEstimate() {
       <table class="summary sfc-est sfc-payout snap">
         <thead>
           <tr>
-            <th class="left" rowspan="2">Trade</th><th class="center" rowspan="2">Quantity</th>
+            <th class="left supp" rowspan="2">Supp Status</th><th class="left" rowspan="2">Trade</th><th class="center" rowspan="2">Quantity</th>
             <th class="group" colspan="2">Ins. Payout Breakdown</th>
             <th rowspan="2">Upgrades</th><th rowspan="2">Contracted Amount</th><th rowspan="2">SFC Cost</th><th rowspan="2">% Profit Margin</th>
           </tr>
@@ -2493,18 +2659,21 @@ function renderSfcEstimate() {
         <tbody>
           ${snapRows}
           <tr>
+            <td class="supp"></td>
             <td class="left trade">OTHER JOB COSTS</td>
             <td></td><td class="sub"></td><td class="sub"></td><td></td><td></td>
             <td>${money0(m.other)}</td>
             <td></td>
           </tr>
           <tr class="snap-money">
+            <td class="supp"></td>
             <td class="left trade">ACV CREDITS</td>
             <td class="center credit-amt">${m.acvCredits > 0 ? fmtUSD(m.acvCredits) : "—"}</td>
             <td class="sub"></td><td class="sub"></td><td></td><td></td><td></td><td></td>
           </tr>
           ${m.marketing > 0 ? `
           <tr class="snap-money">
+            <td class="supp"></td>
             <td class="left trade">MARKETING CREDITS<div class="snap-sub">${esc(sfc.marketingCredits.map((mk) => mk.type).join(", "))}</div></td>
             <td></td><td class="sub"></td><td class="sub"></td><td></td>
             <td class="neg">(${fmtUSD(m.marketing)})</td>
@@ -2513,6 +2682,7 @@ function renderSfcEstimate() {
         </tbody>
         <tfoot>
           <tr class="sfc-net">
+            <td class="supp"></td>
             <td class="left trade">TOTAL</td>
             <td></td>
             <td class="sub">${money0(m.claimACV)}</td>
