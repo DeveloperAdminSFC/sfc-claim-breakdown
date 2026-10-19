@@ -1488,28 +1488,28 @@ const sfcServiceName = (t) =>
 // "cost" is what the work costs SFC per unit; an upgrade's "price" is what the homeowner is
 // charged per unit — never typed, only the quantity is. Editable in the Price list panel
 // (saved in this browser; Reset restores these defaults). Shingle roofs only for now.
-const PRICE_LIST_VERSION = 1;
-const PRICE_LIST_KEY = "sfc-claim-breakdown.priceList.v1";
+const PRICE_LIST_VERSION = 2;
+const PRICE_LIST_KEY = "sfc-claim-breakdown.priceList.v2";
+// Every trade that can be priced has an entry; trades without structured assumptions are bid
+// pricing only but can still carry upgrades the owner adds on the price list page.
+const PRICEABLE_TRADES = Object.keys(SFC_TRADE_UOM);
 const PRICE_LIST_DEFAULT = {
   ROOF: {
-    // Install cost per square by shingle class. Shingle roofs are ASSUMED the lowest class
-    // (class2 = base); a Class 3 / Class 4 upgrade adds that class's cost difference per square.
+    // Install cost per square by shingle class. Shingle roofs are ASSUMED the base class
+    // (Class 3, 2026-10-19); the Class 4 upgrade adds that class's cost difference per square.
     shingles: [
-      { key: "class2", label: "Class 2 shingle (base)", cost: 350 },
-      { key: "class3", label: "Class 3 shingle", cost: 380 },
+      { key: "class3", label: "Class 3 shingle (base)", cost: 380, base: true },
       { key: "class4", label: "Class 4 shingle", cost: 425 },
     ],
     // Steep slope: squares at fromPitch/12 or steeper cost this much more per square.
     steep: { fromPitch: 8, cost: 30 },
     redecking: { cost: 80 },
     // Upgrades charged to the homeowner. costIn = the SFC cost already sits in that assumption
-    // above (so the upgrade adds price, not cost). qtyFrom = quantity follows the assumptions
-    // until the estimator types one.
+    // above (so the upgrade adds price, not cost). classKey = cost is that class minus base.
     upgrades: [
-      { key: "class3", label: "Class 3 Upgrade", unit: "SQ", price: 60, classKey: "class3", qtyFrom: "shingle" },
-      { key: "class4", label: "Class 4 Upgrade", unit: "SQ", price: 150, classKey: "class4", qtyFrom: "shingle" },
+      { key: "class4", label: "Class 4 Upgrade", unit: "SQ", price: 125, classKey: "class4", qtyFrom: "shingle" },
       { key: "redecking", label: "Redecking", unit: "SQ", price: 120, cost: 0, costIn: "redecking", qtyFrom: "redecking" },
-      { key: "ridgevent", label: "Ridge Vent Installation", unit: "LF", price: 20, cost: 0 },
+      { key: "ridgevent", label: "Ridge Vent Installation", unit: "LF", price: 20, cost: 10 },
       { key: "warranty", label: "Warranty (Tamko)", unit: "SQ", price: 200, cost: 75, qtyFrom: "total" },
       { key: "iws", label: "Full IWS", unit: "SQ", price: 80, cost: 40, qtyFrom: "total" },
     ],
@@ -1519,6 +1519,7 @@ const PRICE_LIST_DEFAULT = {
     types: [{ key: "steel", label: "Steel", cost: 10 }, { key: "aluminum", label: "Aluminum", cost: 6 }],
     sixInch: { cost: 1 },
     paint: { cost: 1 },
+    upgrades: [],
   },
   // Siding: cost per SF for the types on the list; every other type needs management's bid.
   SIDING: {
@@ -1532,40 +1533,69 @@ const PRICE_LIST_DEFAULT = {
       { key: "stone", label: "Stone / brick veneer", bid: true },
       { key: "other", label: "Other", bid: true },
     ],
+    upgrades: [],
   },
 };
-const priceListClone = () => JSON.parse(JSON.stringify(PRICE_LIST_DEFAULT));
-// Saved overrides (numbers only) laid over the defaults, so new list entries show up later.
+function priceListClone() {
+  const b = JSON.parse(JSON.stringify(PRICE_LIST_DEFAULT));
+  for (const t of PRICEABLE_TRADES) { b[t] = b[t] || {}; b[t].upgrades = b[t].upgrades || []; }
+  return b;
+}
+// Saved overrides laid over the defaults, so new list entries still show up later. Per trade:
+// { upgrades: { key: { price, cost, label, unit } }, added: [custom upgrades], removed: [keys] }.
 function priceListApply(base, o) {
   const num = (v, d) => (v == null || v === "" || !Number.isFinite(Number(v)) ? d : Number(v));
   const R = o.ROOF || {};
   for (const sh of base.ROOF.shingles) if (R.shingles && R.shingles[sh.key] != null) sh.cost = num(R.shingles[sh.key], sh.cost);
   if (R.steep) { base.ROOF.steep.fromPitch = num(R.steep.fromPitch, base.ROOF.steep.fromPitch); base.ROOF.steep.cost = num(R.steep.cost, base.ROOF.steep.cost); }
   if (R.redecking) base.ROOF.redecking.cost = num(R.redecking.cost, base.ROOF.redecking.cost);
-  for (const u of base.ROOF.upgrades) { const x = R.upgrades && R.upgrades[u.key]; if (x) { u.price = num(x.price, u.price); if (!u.classKey) u.cost = num(x.cost, u.cost); } }
   const G = o.GUTTERS || {};
   for (const t of base.GUTTERS.types) if (G.types && G.types[t.key] != null) t.cost = num(G.types[t.key], t.cost);
   if (G.sixInch) base.GUTTERS.sixInch.cost = num(G.sixInch.cost, base.GUTTERS.sixInch.cost);
   if (G.paint) base.GUTTERS.paint.cost = num(G.paint.cost, base.GUTTERS.paint.cost);
   const S = o.SIDING || {};
   for (const t of base.SIDING.types) if (!t.bid && S.types && S.types[t.key] != null) t.cost = num(S.types[t.key], t.cost);
+  for (const t of PRICEABLE_TRADES) {
+    const T = o[t] || {};
+    for (const u of base[t].upgrades) {
+      const x = T.upgrades && T.upgrades[u.key];
+      if (!x) continue;
+      u.price = num(x.price, u.price);
+      if (!u.classKey && !u.costIn) u.cost = num(x.cost, u.cost);
+      if (x.label) u.label = String(x.label);
+      if (x.unit) u.unit = String(x.unit);
+    }
+    for (const a of T.added || []) {
+      if (a && a.key) base[t].upgrades.push({ key: String(a.key), label: String(a.label || "Upgrade"), unit: String(a.unit || SFC_TRADE_UOM[t] || "EA"), price: num(a.price, 0), cost: num(a.cost, 0), custom: true });
+    }
+    const rm = new Set(T.removed || []);
+    base[t].upgrades = base[t].upgrades.filter((u) => !rm.has(u.key));
+  }
 }
 function priceListLoad() {
   const base = priceListClone();
-  try { const saved = JSON.parse(localStorage.getItem(PRICE_LIST_KEY) || "null"); if (saved && saved.ROOF) priceListApply(base, saved); } catch (_) { /* defaults */ }
+  try { const saved = JSON.parse(localStorage.getItem(PRICE_LIST_KEY) || "null"); if (saved && saved.version) priceListApply(base, saved); } catch (_) { /* defaults */ }
   return base;
 }
 function priceListOverrides(L) {
-  return { version: PRICE_LIST_VERSION, ROOF: {
+  const o = { version: PRICE_LIST_VERSION, ROOF: {
     shingles: Object.fromEntries(L.ROOF.shingles.map((sh) => [sh.key, sh.cost])),
     steep: { ...L.ROOF.steep }, redecking: { ...L.ROOF.redecking },
-    upgrades: Object.fromEntries(L.ROOF.upgrades.map((u) => [u.key, u.classKey ? { price: u.price } : { price: u.price, cost: u.cost }])),
   }, GUTTERS: {
     types: Object.fromEntries(L.GUTTERS.types.map((t) => [t.key, t.cost])),
     sixInch: { ...L.GUTTERS.sixInch }, paint: { ...L.GUTTERS.paint },
   }, SIDING: {
     types: Object.fromEntries(L.SIDING.types.filter((t) => !t.bid).map((t) => [t.key, t.cost])),
   } };
+  for (const t of PRICEABLE_TRADES) {
+    const defaults = (PRICE_LIST_DEFAULT[t] && PRICE_LIST_DEFAULT[t].upgrades) || [];
+    const ups = (L[t] && L[t].upgrades) || [];
+    o[t] = o[t] || {};
+    o[t].upgrades = Object.fromEntries(ups.filter((u) => !u.custom).map((u) => [u.key, { price: u.price, cost: u.cost, label: u.label, unit: u.unit }]));
+    o[t].added = ups.filter((u) => u.custom).map((u) => ({ key: u.key, label: u.label, unit: u.unit, price: u.price, cost: u.cost }));
+    o[t].removed = defaults.filter((d) => !ups.some((u) => u.key === d.key)).map((d) => d.key);
+  }
+  return o;
 }
 let priceList = priceListLoad();
 function priceListSave(L) { priceList = L; try { localStorage.setItem(PRICE_LIST_KEY, JSON.stringify(priceListOverrides(L))); } catch (_) { /* private mode */ } }
@@ -1590,7 +1620,7 @@ const sfcRoofBidMissing = () => sfcRoofTypes().some((t) => roofTypeSpec(t.key).b
 const sfcRoofTotalSq = () => Math.round(sfcRoofTypes().reduce((a, t) => a + Math.max(0, Number(t.sq) || 0), 0) * 100) / 100;
 const sfcRoofSqOf = (key) => sfcRoofTypes().filter((t) => t.key === key).reduce((a, t) => a + Math.max(0, Number(t.sq) || 0), 0);
 // The lowest shingle class on the list — what every shingle roof is assumed to be.
-const sfcShingleBase = () => priceList.ROOF.shingles.find((sh) => sh.key === "class2") || priceList.ROOF.shingles[0];
+const sfcShingleBase = () => priceList.ROOF.shingles.find((sh) => sh.base) || priceList.ROOF.shingles[0];
 // Per-unit SFC cost of a list upgrade: a class upgrade costs the class's difference over base.
 function sfcUpgradeUnitCost(spec) {
   if (!spec.classKey) return Number(spec.cost) || 0;
@@ -2331,7 +2361,7 @@ function renderSfcPricing() {
   const upgradePick = `
       <select id="sfcUpgradePick" class="input sfc-up-pick" aria-label="Add upgrade">
         <option value="">＋ Add upgrade…</option>
-        <optgroup label="Roof upgrades">${priceList.ROOF.upgrades.map((u) => `<option value="ROOF:${esc(u.key)}">${esc(u.label)}</option>`).join("")}</optgroup>
+        ${PRICEABLE_TRADES.filter((t) => priceList[t] && priceList[t].upgrades.length).map((t) => `<optgroup label="${esc(t)} upgrades">${priceList[t].upgrades.map((u) => `<option value="${esc(t)}:${esc(u.key)}">${esc(u.label)}</option>`).join("")}</optgroup>`).join("")}
         <option value="custom">Custom upgrade — type the price</option>
       </select>`;
   const marketingRows = sfc.marketingCredits.map((m) => `
@@ -2418,56 +2448,120 @@ function renderSfcPricing() {
   sfcWireNav(finish, finish);
 }
 
-// ---- price list panel: owner-only. Not linked from the tool — it opens only when the URL
+// ---- price list page: owner-only. Not linked from the tool — it opens only when the URL
 // ends in /pricelist (Netlify rewrite) or carries ?pricelist / #pricelist (local server). ----
 const priceListRequested = () => /\/pricelist\/?$/i.test(location.pathname) || /(^|[?&#])pricelist(?![\w-])/i.test(location.search + location.hash);
+const PL_UNITS = ["SQ", "SF", "LF", "EA", "PNL"];
+let plDraft = null; // working copy while the page is open
+let plSeq = 1;
 function openPriceList() {
-  const L = priceList;
+  plDraft = JSON.parse(JSON.stringify(priceList));
+  document.body.classList.add("pl-mode");
+  document.getElementById("priceListPage").hidden = false;
+  renderPriceListPage("");
+}
+function renderPriceListPage(status) {
+  const L = plDraft;
   const row = (label, cells) => `<tr><td class="pl-k">${label}</td>${cells}</tr>`;
   const inp = (cls, key, v, unit, step = 1) => `<td class="pl-v"><span class="sfc-field"><span class="pl-cur">$</span><input class="input ${cls}" type="number" min="0" step="${step}" inputmode="decimal" data-key="${esc(key)}" value="${esc(v)}" /><span class="uom">/ ${esc(unit)}</span></span></td>`;
-  document.getElementById("priceListBody").innerHTML = `
-    <p class="disc-lead">Owner page. What the work costs SFC per unit, and what each upgrade is charged at. Shingle roofs are priced at the base class; a class upgrade adds that class's cost difference. Saved in this browser and used by every estimate built here.</p>
-    <p class="section-label">Roof · SFC cost</p>
+  const upgradesTable = (t) => {
+    const ups = L[t].upgrades;
+    const rows = ups.map((u) => {
+      const costCell = u.classKey
+        ? `<td class="pl-v"><span class="sfc-muted">${fmtRate(sfcUpgradeUnitCost(u))} / ${esc(u.unit)} <em>(class cost − base)</em></span></td>`
+        : u.costIn
+          ? `<td class="pl-v"><span class="sfc-muted">in ${esc(u.costIn)}</span></td>`
+          : `<td class="pl-v"><span class="sfc-field"><span class="pl-cur">$</span><input class="input pl-up-cost" type="number" min="0" step="0.01" inputmode="decimal" data-t="${esc(t)}" data-k="${esc(u.key)}" value="${esc(u.cost)}" /><span class="uom">/ ${esc(u.unit)}</span></span></td>`;
+      return `
+      <tr>
+        <td class="pl-k"><input class="input pl-up-label" type="text" data-t="${esc(t)}" data-k="${esc(u.key)}" value="${esc(u.label)}" placeholder="Upgrade name" /></td>
+        <td class="pl-v"><select class="input pl-up-unit" data-t="${esc(t)}" data-k="${esc(u.key)}" ${u.classKey || u.costIn ? "disabled" : ""}>${PL_UNITS.map((x) => `<option value="${x}" ${x === u.unit ? "selected" : ""}>${x}</option>`).join("")}</select></td>
+        <td class="pl-v"><span class="sfc-field"><span class="pl-cur">$</span><input class="input pl-up-price" type="number" min="0" step="0.01" inputmode="decimal" data-t="${esc(t)}" data-k="${esc(u.key)}" value="${esc(u.price)}" /><span class="uom">/ ${esc(u.unit)}</span></span></td>
+        ${costCell}
+        <td class="check"><button type="button" class="btn btn-ghost btn-lock pl-up-del" data-t="${esc(t)}" data-k="${esc(u.key)}" title="Remove from the list">✕</button></td>
+      </tr>`;
+    }).join("");
+    return `
+    <p class="section-label">Upgrades &amp; add-ons <span class="sfc-muted">what the homeowner is charged · what it costs SFC — these show in "Add upgrade…" on Pricing</span></p>
+    <table class="disc-table pl-table pl-ups">
+      <thead><tr><th>Name</th><th>Unit</th><th>Price charged</th><th>SFC cost</th><th></th></tr></thead>
+      <tbody>${rows || `<tr><td class="pl-k sfc-muted" colspan="5">No upgrades on this trade yet.</td></tr>`}</tbody>
+    </table>
+    <button type="button" class="btn btn-ghost pl-up-add" data-t="${esc(t)}">＋ Add an upgrade to ${esc(t)}</button>`;
+  };
+  const card = (t, inner) => `
+    <section class="pl-trade">
+      <h2><span class="trade-swatch" style="background:${TRADE_COLORS[t] || "#94a3b8"}"></span>${esc(t)} <span class="sfc-muted">per ${esc(SFC_TRADE_UOM[t])}</span></h2>
+      ${inner}
+      ${upgradesTable(t)}
+    </section>`;
+  const roof = `
+    <p class="section-label">SFC cost <span class="sfc-muted">shingle roofs are assumed the base class; a class upgrade adds that class's cost difference</span></p>
     <table class="disc-table pl-table"><tbody>
       ${L.ROOF.shingles.map((sh) => row(esc(sh.label), inp("pl-shingle", sh.key, sh.cost, "SQ"))).join("")}
       ${row(`Steep slope — squares at <input class="input pl-pitch" type="number" min="1" step="1" value="${esc(L.ROOF.steep.fromPitch)}" aria-label="Steep from pitch" />/12 and steeper`, inp("pl-steep", "cost", L.ROOF.steep.cost, "SQ"))}
       ${row("Redecking", inp("pl-redeck", "cost", L.ROOF.redecking.cost, "SQ"))}
-    </tbody></table>
-    <p class="section-label">Roof · upgrades</p>
-    <table class="disc-table pl-table">
-      <thead><tr><th></th><th>Price charged</th><th>SFC cost</th></tr></thead>
-      <tbody>${L.ROOF.upgrades.map((u) => row(esc(u.label), inp("pl-up-price", u.key, u.price, u.unit) +
-        (u.classKey ? `<td class="pl-v"><span class="sfc-muted">${fmtRate(sfcUpgradeUnitCost(u))} / SQ over base <em>(class cost − base)</em></span></td>`
-          : u.costIn ? `<td class="pl-v"><span class="sfc-muted">in ${esc(u.costIn)}</span></td>` : inp("pl-up-cost", u.key, u.cost, u.unit)))).join("")}</tbody>
-    </table>
-    <p class="section-label">Gutters · SFC cost <span class="sfc-muted">per LF of gutter + downspout</span></p>
+    </tbody></table>`;
+  const gutters = `
+    <p class="section-label">SFC cost <span class="sfc-muted">per LF of gutter + downspout</span></p>
     <table class="disc-table pl-table"><tbody>
       ${L.GUTTERS.types.map((t) => row(`${esc(t.label)} (base)`, inp("pl-gt-type", t.key, t.cost, "LF", 0.01))).join("")}
       ${row("6 inch adder", inp("pl-gt-six", "cost", L.GUTTERS.sixInch.cost, "LF", 0.01))}
       ${row("Painting adder", inp("pl-gt-paint", "cost", L.GUTTERS.paint.cost, "LF", 0.01))}
-    </tbody></table>
-    <p class="section-label">Siding · SFC cost <span class="sfc-muted">per SF; every other type is bid</span></p>
+    </tbody></table>`;
+  const siding = `
+    <p class="section-label">SFC cost <span class="sfc-muted">per SF; every other type takes management's estimate on the Assumptions page</span></p>
     <table class="disc-table pl-table"><tbody>
       ${L.SIDING.types.map((t) => row(esc(t.label), t.bid ? `<td class="pl-v"><span class="sfc-muted">requires bid</span></td>` : inp("pl-sd-type", t.key, t.cost, "SF", 0.01))).join("")}
     </tbody></table>`;
-  document.getElementById("priceListModal").hidden = false;
+  const bidOnly = (t) => `<p class="pl-bidnote">Bid pricing only — the cost comes from management's estimate on the Assumptions page.</p>`;
+  document.getElementById("priceListBody").innerHTML =
+    PRICEABLE_TRADES.map((t) => card(t, t === "ROOF" ? roof : t === "GUTTERS" ? gutters : t === "SIDING" ? siding : bidOnly(t))).join("");
+  document.getElementById("plStatus").textContent = status || "";
+  document.getElementById("plStatus").classList.toggle("ok", /saved|restored/i.test(status || ""));
+
+  const snapshot = () => {
+    const L = plDraft;
+    const n = (el, d) => { const v = Number(el.value); return el.value !== "" && Number.isFinite(v) && v >= 0 ? v : d; };
+    for (const el of document.querySelectorAll(".pl-shingle")) { const sh = L.ROOF.shingles.find((x) => x.key === el.dataset.key); if (sh) sh.cost = n(el, sh.cost); }
+    const p = document.querySelector(".pl-pitch"); if (p) L.ROOF.steep.fromPitch = n(p, L.ROOF.steep.fromPitch);
+    const st = document.querySelector(".pl-steep"); if (st) L.ROOF.steep.cost = n(st, L.ROOF.steep.cost);
+    const rd = document.querySelector(".pl-redeck"); if (rd) L.ROOF.redecking.cost = n(rd, L.ROOF.redecking.cost);
+    for (const el of document.querySelectorAll(".pl-gt-type")) { const t = L.GUTTERS.types.find((x) => x.key === el.dataset.key); if (t) t.cost = n(el, t.cost); }
+    const six = document.querySelector(".pl-gt-six"); if (six) L.GUTTERS.sixInch.cost = n(six, L.GUTTERS.sixInch.cost);
+    const pt = document.querySelector(".pl-gt-paint"); if (pt) L.GUTTERS.paint.cost = n(pt, L.GUTTERS.paint.cost);
+    for (const el of document.querySelectorAll(".pl-sd-type")) { const t = L.SIDING.types.find((x) => x.key === el.dataset.key); if (t) t.cost = n(el, t.cost); }
+    const up = (el) => (L[el.dataset.t].upgrades || []).find((u) => u.key === el.dataset.k);
+    for (const el of document.querySelectorAll(".pl-up-label")) { const u = up(el); if (u && el.value.trim()) u.label = el.value.trim(); }
+    for (const el of document.querySelectorAll(".pl-up-unit")) { const u = up(el); if (u && !el.disabled) u.unit = el.value; }
+    for (const el of document.querySelectorAll(".pl-up-price")) { const u = up(el); if (u) u.price = n(el, u.price); }
+    for (const el of document.querySelectorAll(".pl-up-cost")) { const u = up(el); if (u) u.cost = n(el, u.cost); }
+  };
+  for (const btn of document.querySelectorAll(".pl-up-add")) btn.addEventListener("click", () => {
+    snapshot();
+    const t = btn.dataset.t;
+    plDraft[t].upgrades.push({ key: `c${Date.now().toString(36)}${plSeq++}`, label: "", unit: SFC_TRADE_UOM[t] || "EA", price: 0, cost: 0, custom: true });
+    renderPriceListPage("Unsaved changes");
+    const inputs = document.querySelectorAll(`.pl-up-label[data-t="${t}"]`); const last = inputs[inputs.length - 1]; if (last) last.focus();
+  });
+  for (const btn of document.querySelectorAll(".pl-up-del")) btn.addEventListener("click", () => {
+    snapshot();
+    plDraft[btn.dataset.t].upgrades = plDraft[btn.dataset.t].upgrades.filter((u) => u.key !== btn.dataset.k);
+    renderPriceListPage("Unsaved changes");
+  });
+  for (const el of document.querySelectorAll(".pl-up-unit, .pl-shingle, .pl-up-price")) el.addEventListener("change", () => { snapshot(); renderPriceListPage("Unsaved changes"); });
+  for (const el of document.querySelectorAll("#priceListBody input")) el.addEventListener("input", () => { document.getElementById("plStatus").textContent = "Unsaved changes"; document.getElementById("plStatus").classList.remove("ok"); });
+  document.getElementById("plSaveBtn").onclick = () => {
+    snapshot();
+    for (const t of PRICEABLE_TRADES) plDraft[t].upgrades = plDraft[t].upgrades.filter((u) => !u.custom || u.label);
+    priceListSave(JSON.parse(JSON.stringify(plDraft)));
+    renderPriceListPage(`Saved to this browser · ${new Date().toLocaleTimeString("en-US")}`);
+  };
+  document.getElementById("plResetBtn").onclick = () => {
+    priceListReset(); plDraft = JSON.parse(JSON.stringify(priceList));
+    renderPriceListPage("Defaults restored");
+  };
 }
-function readPriceListForm() {
-  const L = JSON.parse(JSON.stringify(priceList));
-  const n = (el, d) => { const v = Number(el.value); return el.value !== "" && Number.isFinite(v) && v >= 0 ? v : d; };
-  for (const el of document.querySelectorAll(".pl-shingle")) { const sh = L.ROOF.shingles.find((x) => x.key === el.dataset.key); if (sh) sh.cost = n(el, sh.cost); }
-  const p = document.querySelector(".pl-pitch"); if (p) L.ROOF.steep.fromPitch = n(p, L.ROOF.steep.fromPitch);
-  const st = document.querySelector(".pl-steep"); if (st) L.ROOF.steep.cost = n(st, L.ROOF.steep.cost);
-  const rd = document.querySelector(".pl-redeck"); if (rd) L.ROOF.redecking.cost = n(rd, L.ROOF.redecking.cost);
-  for (const el of document.querySelectorAll(".pl-up-price")) { const u = L.ROOF.upgrades.find((x) => x.key === el.dataset.key); if (u) u.price = n(el, u.price); }
-  for (const el of document.querySelectorAll(".pl-up-cost")) { const u = L.ROOF.upgrades.find((x) => x.key === el.dataset.key); if (u) u.cost = n(el, u.cost); }
-  for (const el of document.querySelectorAll(".pl-gt-type")) { const t = L.GUTTERS.types.find((x) => x.key === el.dataset.key); if (t) t.cost = n(el, t.cost); }
-  const six = document.querySelector(".pl-gt-six"); if (six) L.GUTTERS.sixInch.cost = n(six, L.GUTTERS.sixInch.cost);
-  const pt = document.querySelector(".pl-gt-paint"); if (pt) L.GUTTERS.paint.cost = n(pt, L.GUTTERS.paint.cost);
-  for (const el of document.querySelectorAll(".pl-sd-type")) { const t = L.SIDING.types.find((x) => x.key === el.dataset.key); if (t) t.cost = n(el, t.cost); }
-  return L;
-}
-function closePriceList() { document.getElementById("priceListModal").hidden = true; }
 
 // ---- the claim-breakdown summary page (page 1 of the estimate) ----
 function claimSummaryPageHTML(deductibleOverride) {
@@ -2809,15 +2903,8 @@ function init() {
   });
   document.getElementById("sfcPrintBtn").addEventListener("click", () => window.print());
   document.getElementById("sfcCloseBtn").addEventListener("click", closeSfcModal);
-  // Price list panel (hidden owner page). Save re-prices an open pricing screen.
+  // Price list page (hidden owner page): takes over the window when the URL asks for it.
   if (priceListRequested()) openPriceList();
-  document.getElementById("plSaveBtn").addEventListener("click", () => {
-    priceListSave(readPriceListForm()); closePriceList();
-    if (document.querySelector("#sfcBody .sfc-form") && !document.getElementById("sfcModal").hidden) renderSfcPricing();
-  });
-  document.getElementById("plResetBtn").addEventListener("click", () => { priceListReset(); openPriceList(); });
-  document.getElementById("plCancelBtn").addEventListener("click", closePriceList);
-  document.getElementById("plBackdrop").addEventListener("click", closePriceList);
   document.getElementById("sfcBackdrop").addEventListener("click", closeSfcModal);
 
   // Summary modal controls: download, and close via ✕ / backdrop / Escape.

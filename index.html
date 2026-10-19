@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Claim Breakdown by Trade</title>
-  <link rel="stylesheet" href="styles.css??v=20261019g" />
+  <link rel="stylesheet" href="styles.css?v=20261019h" />
 </head>
 <body>
   <!-- ===================== CONTROL BAR (screen only) ===================== -->
@@ -150,21 +150,22 @@
     </div>
   </div>
 
-  <div id="priceListModal" class="modal" hidden>
-    <div class="modal-backdrop" id="plBackdrop"></div>
-    <div class="modal-panel modal-panel-sm pl-panel" role="dialog" aria-modal="true" aria-label="Price list">
-      <header class="modal-bar">
-        <span class="modal-title">Price list</span>
-      </header>
-      <div class="modal-body" id="priceListBody"><!-- Populated by app.js --></div>
-      <footer class="modal-foot">
+  <section id="priceListPage" class="pl-page" hidden>
+    <header class="pl-head">
+      <div>
+        <p class="doc-eyebrow">Owner page · not linked from the tool</p>
+        <h1 class="doc-title">SFC Price List</h1>
+        <p class="sfc-note">What the work costs SFC per unit and what each upgrade is charged at. Production managers never see these rates — they only see the resulting cost. Saved in this browser.</p>
+      </div>
+      <div class="pl-actions">
+        <span id="plStatus" class="pl-status"></span>
         <button id="plResetBtn" class="btn btn-ghost" title="Back to the standard rates">Reset to defaults</button>
-        <button id="plCancelBtn" class="btn">Cancel</button>
         <button id="plSaveBtn" class="btn btn-primary">Save price list</button>
-      </footer>
-    </div>
-  </div>
+      </div>
+    </header>
+    <div id="priceListBody" class="pl-body"><!-- Populated by app.js --></div>
+  </section>
 
-  <script src="app.js??v=20261019g"></script>
+  <script src="app.js?v=20261019h"></script>
 </body>
 </html>

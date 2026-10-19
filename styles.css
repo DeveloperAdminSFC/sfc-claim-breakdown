@@ -1076,7 +1076,7 @@ body.sfc-open { overflow: hidden; }
    claim summary plus the estimate, with the summary page twice). A closed window must never
    reach the paper: same id specificity plus the attribute, declared last. */
 @media print {
-  #summaryModal[hidden], #sfcModal[hidden], #discrepancyModal, #priceListModal { display: none !important; }
+  #summaryModal[hidden], #sfcModal[hidden], #discrepancyModal, #priceListPage { display: none !important; }
 }
 
 /* Preliminary pricing: bold notice at the bottom of the sheet */
@@ -1175,3 +1175,23 @@ body.sfc-open { overflow: hidden; }
 .sfc-upgrades-6 th.trade, .sfc-upgrades-6 td.trade { width: 15%; }
 .snap td.supp, .snap th.supp { font-size: 9.5px; font-weight: 700; letter-spacing: 0.04em; white-space: nowrap; width: 84px; color: var(--ink-soft); }
 .sfc-flow-gate { margin: 4px 0 16px; font-size: 14px; }
+/* ---- Owner price list page ---- */
+.pl-mode .toolbar, .pl-mode .empty, .pl-mode .review { display: none !important; }
+.pl-page { max-width: 1100px; margin: 0 auto; padding: 28px 24px 80px; }
+.pl-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; flex-wrap: wrap; padding-bottom: 16px; border-bottom: 2px solid var(--ink); margin-bottom: 8px; }
+.pl-head .sfc-note { max-width: 640px; margin: 6px 0 0; }
+.pl-actions { display: flex; align-items: center; gap: 10px; position: sticky; top: 12px; }
+.pl-status { font-size: 13px; font-weight: 600; color: var(--ink-faint); white-space: nowrap; }
+.pl-status.ok { color: var(--pos); }
+.pl-trade { padding: 22px 0 18px; border-bottom: 1px solid var(--rule); }
+.pl-trade h2 { display: flex; align-items: center; gap: 10px; font-size: 20px; font-weight: 800; margin: 0 0 6px; }
+.pl-trade h2 .sfc-muted { font-size: 13px; font-weight: 500; }
+.pl-trade .section-label { margin: 14px 0 6px; }
+.pl-trade .section-label .sfc-muted { text-transform: none; letter-spacing: 0; font-weight: 500; }
+.pl-trade .disc-table { max-width: 760px; }
+.pl-ups.disc-table { max-width: none; }
+.pl-ups .pl-k .input { width: 100%; min-width: 220px; height: 36px; text-align: left; font-weight: 600; }
+.pl-ups select.input { width: 80px; height: 36px; padding: 0 6px; }
+.pl-ups th.check, .pl-ups td.check { width: 48px; text-align: center; }
+.pl-up-add { margin-top: 8px; height: 38px; }
+.pl-bidnote { font-size: 13.5px; color: var(--ink-soft); margin: 4px 0 0; }
