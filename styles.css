@@ -1168,3 +1168,4 @@ body.sfc-open { overflow: hidden; }
 .sfc-form td.cost .sfc-bidreq { display: block; width: max-content; font-size: 12px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--neg); margin-bottom: 6px; }
 .sfc-flow-pair { display: flex; flex-wrap: wrap; gap: 10px 32px; margin-bottom: 6px; }
 .sfc-flow-k { font-size: 14px; font-weight: 600; color: var(--ink-soft); min-width: 140px; }
+.sfc-form td.cost .sfc-cost-note { display: block; font-size: 11.5px; font-weight: 600; color: var(--neg); margin-top: 2px; }

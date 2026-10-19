@@ -1622,7 +1622,7 @@ function sfcIsBid(trade) {
 // list where there is one, bid for the bid trades and for any trade with no usable history.
 function sfcMode(trade) {
   const m = sfc.mode[trade];
-  if (sfcHasPriceList(trade)) return m === "bid" ? "bid" : "list";
+  if (sfcHasPriceList(trade)) return "list"; // ROOF: it is just the cost from Assumptions
   if (m === "measure" || m === "bid") return m;
   return sfcIsBid(trade) ? "bid" : "measure";
 }
@@ -1950,9 +1950,13 @@ function renderSfcAssumptions() {
   const needsBid = sfcRoofNeedsBid();
   const total = sfcRoofTotalSq();
   const pitchSum = Math.round(((Number(r.steepSq) || 0) + (Number(r.walkSq) || 0)) * 100) / 100;
-  const pitchNote = total > 0 && pitchSum > 0 && Math.abs(pitchSum - total) > 0.01
-    ? `<span class="sfc-as-flag on">Pitch squares total ${esc(pitchSum)} SQ — roof is ${esc(total)} SQ</span>`
-    : total > 0 && pitchSum > 0 ? `<span class="sfc-as-flag">Matches the roof total</span>` : "";
+  // The pitch split must account for every square — not fewer, not more — before moving on.
+  const pitchOk = total > 0 && Math.abs(pitchSum - total) <= 0.01;
+  const pitchNote = total <= 0
+    ? `<span class="sfc-as-flag on">Enter the roof squares first</span>`
+    : pitchOk
+      ? `<span class="sfc-as-flag">Matches the roof total</span>`
+      : `<span class="sfc-as-flag on">Pitch squares total ${esc(pitchSum)} SQ — they must equal the roof's ${esc(total)} SQ to continue</span>`;
   const used = new Set(r.types.map((t) => t.key));
   const bidMissing = sfcRoofBidMissing();
   const typeRows = r.types.map((t, i) => {
@@ -2028,7 +2032,8 @@ function renderSfcAssumptions() {
       <b>${esc(r.types.filter((t) => roofTypeSpec(t.key).bid).map((t) => roofTypeSpec(t.key).label).join(" & ").toUpperCase())} NOT ON PRICE LIST CURRENTLY; ASK MANAGEMENT FOR ESTIMATED COSTS</b>
       <span>${bidMissing ? "Enter the estimated cost next to the roof type above to continue." : "Estimated cost entered — the roof prices with it."}</span>
     </div>` : ""}`;
-  document.getElementById("sfcNextBtn").disabled = bidMissing;
+  document.getElementById("sfcNextBtn").disabled = bidMissing || !pitchOk;
+  document.getElementById("sfcNextBtn").title = bidMissing ? "Enter the estimated cost first" : !pitchOk ? "Pitch squares must equal the roof total" : "";
 
   const snapshot = () => {
     for (const inp of document.querySelectorAll(".sfc-rt-sq")) { const t = r.types[Number(inp.dataset.i)]; if (t) { const v = Number(inp.value); t.sq = v > 0 ? v : null; } }
@@ -2080,20 +2085,20 @@ function renderSfcPricing() {
       }
       const mode = sfcMode(g.trade);
       const modeSwitch = `<span class="sfc-mode" role="group" aria-label="Price by">
-          ${sfcHasPriceList(g.trade)
-            ? `<button type="button" class="sfc-mode-btn sfc-mode-list" data-trade="${esc(g.trade)}" aria-pressed="${mode === "list"}">Price list</button>`
-            : `<button type="button" class="sfc-mode-btn sfc-mode-measure" data-trade="${esc(g.trade)}" aria-pressed="${mode === "measure"}">Measure</button>`}
+          <button type="button" class="sfc-mode-btn sfc-mode-measure" data-trade="${esc(g.trade)}" aria-pressed="${mode === "measure"}">Measure</button>
           <button type="button" class="sfc-mode-btn sfc-mode-bid" data-trade="${esc(g.trade)}" aria-pressed="${mode === "bid"}">Bid</button>
         </span>`;
       if (mode === "list") {
-        // ROOF from the price list: squares come from the assumptions card, cost is computed.
+        // ROOF: squares and cost come from the Assumptions step; upgrades add their SFC cost.
+        // No price-list / bid choice is offered — it is just the cost.
         const rc = g.trade === "ROOF" ? roofCost : null;
+        const upCost = ups.reduce((a, u) => a + (Number(u.cost) || 0), 0);
         return `
       <tr>${tradeCell}
         <td class="num rcv">${fmtUSD(c.rcv)}</td>
         <td class="num meas"><span class="sfc-field"><span class="sfc-rate">${rc && rc.sq > 0 ? `<b>${esc(rc.sq)}</b>` : "<em>see Assumptions</em>"}</span><span class="uom">${esc(uom)}</span></span></td>
-        <td class="cost">${modeSwitch}${rc
-          ? `<span class="sfc-field"><span class="sfc-rate"><b>${fmtUSD(rc.cost)}</b></span></span>`
+        <td class="cost">${rc
+          ? `<span class="sfc-field"><span class="sfc-rate"><b>${fmtUSD(rc.cost + upCost)}</b></span></span>${upCost > 0 ? `<span class="sfc-cost-note">incl. upgrades +${fmtUSD(upCost)}</span>` : ""}`
           : `<span class="sfc-field"><span class="sfc-rate"><em>${sfcRoofBidMissing() ? "estimated cost missing — see Assumptions" : "enter the roof squares on the Assumptions step"}</em></span></span>`}</td>
       </tr>`;
       }
