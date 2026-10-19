@@ -1224,3 +1224,13 @@ body.pl-mode { display: block; overflow: auto; }
 .summary.sfc-payout.snap th.supp, .summary.sfc-payout.snap td.supp { width: 72px; }
 .summary.sfc-payout.snap td.trade { width: 27%; }
 .snap .snap-sub.snap-upline > span:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* On-screen preview of the Price Snapshot uses the printed sheet's compact sizing, so the
+   table fits the 7.5in content box instead of spilling past the page edge. */
+#sfcBody .summary.sfc-est.snap { font-size: 12px; width: 100%; }
+#sfcBody .summary.sfc-est.snap thead th { padding: 5px 4px; font-size: 9.5px; }
+#sfcBody .summary.sfc-est.snap tbody td, #sfcBody .summary.sfc-est.snap tfoot td { padding: 7px 5px; }
+#sfcBody .summary.sfc-est.snap tfoot td { font-size: 13px; }
+#sfcBody .summary.sfc-est.snap tr.sfc-net td { padding-top: 10px; padding-bottom: 10px; font-size: 13.5px; }
+#sfcBody .summary.sfc-est.snap td.trade { font-size: 12.5px; }
+#sfcBody .summary.sfc-est.snap td.supp, #sfcBody .summary.sfc-est.snap th.supp { font-size: 8.5px; width: 64px; }
+#sfcBody .summary.sfc-est.snap .snap-sub { font-size: 10.5px; }
