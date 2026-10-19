@@ -1538,7 +1538,7 @@ const PRICE_LIST_DEFAULT = {
 };
 function priceListClone() {
   const b = JSON.parse(JSON.stringify(PRICE_LIST_DEFAULT));
-  for (const t of PRICEABLE_TRADES) { b[t] = b[t] || {}; b[t].upgrades = b[t].upgrades || []; }
+  for (const t of PRICEABLE_TRADES) { b[t] = b[t] || {}; b[t].upgrades = b[t].upgrades || []; b[t].costs = b[t].costs || []; }
   return b;
 }
 // Saved overrides laid over the defaults, so new list entries still show up later. Per trade:
@@ -1570,6 +1570,9 @@ function priceListApply(base, o) {
     }
     const rm = new Set(T.removed || []);
     base[t].upgrades = base[t].upgrades.filter((u) => !rm.has(u.key));
+    // Cost items are all owner-added: what SFC pays per unit, asked for by quantity on the
+    // trade's Assumptions page.
+    base[t].costs = (T.costs || []).filter((c) => c && c.key).map((c) => ({ key: String(c.key), label: String(c.label || "Cost item"), unit: String(c.unit || SFC_TRADE_UOM[t] || "EA"), cost: num(c.cost, 0) }));
   }
 }
 function priceListLoad() {
@@ -1594,6 +1597,7 @@ function priceListOverrides(L) {
     o[t].upgrades = Object.fromEntries(ups.filter((u) => !u.custom).map((u) => [u.key, { price: u.price, cost: u.cost, label: u.label, unit: u.unit }]));
     o[t].added = ups.filter((u) => u.custom).map((u) => ({ key: u.key, label: u.label, unit: u.unit, price: u.price, cost: u.cost }));
     o[t].removed = defaults.filter((d) => !ups.some((u) => u.key === d.key)).map((d) => d.key);
+    o[t].costs = ((L[t] && L[t].costs) || []).map((c) => ({ key: c.key, label: c.label, unit: c.unit, cost: c.cost }));
   }
   return o;
 }
@@ -1686,13 +1690,31 @@ function sfcBidCost(trade) {
   const b = Number(sfc.bids[trade]) || 0;
   return b > 0 ? { qty: Number(sfc.measurements[trade]) || null, cost: b, parts: [] } : null;
 }
+// Owner-added cost items for a trade, priced by the quantities typed on its Assumptions page.
+const sfcCostItems = (trade) => ((priceList[trade] && priceList[trade].costs) || []);
+function sfcCostItemParts(trade) {
+  const q = sfc.costQty[trade] || {};
+  return sfcCostItems(trade)
+    .map((it) => ({ key: it.key, label: it.label, qty: Math.max(0, Number(q[it.key]) || 0), rate: it.cost, cost: Math.max(0, Number(q[it.key]) || 0) * it.cost }))
+    .filter((p) => p.qty > 0);
+}
 // The SFC cost of a trade from its assumptions: { qty, cost, parts } or null while unpriced.
 function sfcTradeCost(trade) {
   if (sfcIsClaimOnly(trade)) return null;
-  if (trade === "ROOF") { const rc = sfcRoofCost(); return rc ? { qty: rc.sq, cost: rc.cost, parts: rc.parts } : null; }
-  if (trade === "GUTTERS") return sfcGutterCost();
-  if (trade === "SIDING") return sfcSidingCost();
-  return sfcBidCost(trade);
+  const extra = sfcCostItemParts(trade);
+  const extraCost = extra.reduce((a, p) => a + p.cost, 0);
+  let base = null;
+  if (trade === "ROOF") { const rc = sfcRoofCost(); base = rc ? { qty: rc.sq, cost: rc.cost, parts: rc.parts } : null; }
+  else if (trade === "GUTTERS") base = sfcGutterCost();
+  else if (trade === "SIDING") base = sfcSidingCost();
+  else {
+    // Bid-only trade: management's estimate, and/or the owner's cost items by quantity.
+    const b = sfcBidCost(trade);
+    if (b) base = b;
+    else if (extra.length) base = { qty: Number(sfc.measurements[trade]) || null, cost: 0, parts: [] };
+  }
+  if (!base) return null;
+  return { qty: base.qty, cost: base.cost + extraCost, parts: [...base.parts, ...extra] };
 }
 // Supplement status, shown left of every trade on Pricing and the Price Snapshot.
 const SFC_SUPP_OPTIONS = ["WORK DOING", "WORK NOT DOING", "SUPP. DEPENDING"];
@@ -1720,6 +1742,7 @@ let sfc = {
   roof: { types: [], steepSq: null, walkSq: null, redeck: false, redeckSq: null }, // roof assumptions (own step)
   gutters: { type: null, gutterLf: null, downLf: null, size: null, paint: null },
   siding: { types: [] },
+  costQty: {}, // trade -> { costItemKey: quantity } for the owner's cost items
   supp: {}, // trade -> supplement status
 };
 let sfcSeq = 1;
@@ -1862,7 +1885,7 @@ async function openSfcEstimate() {
   if (!groups.length) return setStatus("No line items carry RCV yet.", "error");
   if (sfc.itemsRef !== state.items) {
     sfc.itemsRef = state.items;
-    sfc.credits = {}; sfc.measurements = {}; sfc.bids = {}; sfc.supp = {};
+    sfc.credits = {}; sfc.measurements = {}; sfc.bids = {}; sfc.supp = {}; sfc.costQty = {};
     sfc.deductible = null; sfc.client = ""; sfc.upgrades = []; sfc.marketingCredits = [];
     sfc.roof = sfcRoofDefaults(); sfc.gutters = sfcGutterDefaults(); sfc.siding = sfcSidingDefaults();
   }
@@ -2100,6 +2123,7 @@ function renderSfcAssumptions(g, pos, count) {
           </span>
         </div>
       </li>
+      ${costItemsStepHTML("ROOF", 5)}
     </ol>
     ${needsBid ? `
     <div class="sfc-bid-banner">
@@ -2110,6 +2134,7 @@ function renderSfcAssumptions(g, pos, count) {
   document.getElementById("sfcNextBtn").title = bidMissing ? "Enter the estimated cost first" : !pitchOk ? "Pitch squares must equal the roof total" : "";
 
   const snapshot = () => {
+    costItemsSnapshot("ROOF");
     for (const inp of document.querySelectorAll(".sfc-rt-sq")) { const t = r.types[Number(inp.dataset.i)]; if (t) { const v = Number(inp.value); t.sq = v > 0 ? v : null; } }
     for (const inp of document.querySelectorAll(".sfc-rt-bid")) { const t = r.types[Number(inp.dataset.i)]; if (t) { const v = Number(inp.value); t.bid = v > 0 ? v : null; } }
     const stEl = document.getElementById("sfcRoofSteepSq"); if (stEl) { const v = Number(stEl.value); r.steepSq = v > 0 ? v : null; }
@@ -2124,13 +2149,37 @@ function renderSfcAssumptions(g, pos, count) {
     snapshot(); r.types.push({ key, sq: null, bid: null }); renderSfcAssumptions();
     const last = document.querySelector(".sfc-rooftypes tbody tr:last-child .sfc-rt-sq"); if (last) last.focus();
   });
-  for (const el of document.querySelectorAll(".sfc-rt-sq, .sfc-rt-bid, #sfcRoofSteepSq, #sfcRoofWalkSq, #sfcRoofRedeckSq")) el.addEventListener("change", rerender);
+  for (const el of document.querySelectorAll(".sfc-rt-sq, .sfc-rt-bid, .sfc-ci-qty, #sfcRoofSteepSq, #sfcRoofWalkSq, #sfcRoofRedeckSq")) el.addEventListener("change", rerender);
   for (const btn of document.querySelectorAll(".sfc-rt-del")) btn.addEventListener("click", () => { snapshot(); r.types.splice(Number(btn.dataset.i), 1); renderSfcAssumptions(); });
   for (const btn of document.querySelectorAll(".sfc-redeck-btn")) btn.addEventListener("click", () => {
     snapshot(); r.redeck = btn.dataset.v === "1"; if (!r.redeck) r.redeckSq = null; renderSfcAssumptions();
     const sqEl = document.getElementById("sfcRoofRedeckSq"); if (sqEl) sqEl.focus();
   });
   sfcWireNav(snapshot, snapshot);
+}
+
+// ---- owner-added cost items: one quantity box per item, on every trade's Assumptions page ----
+function costItemsStepHTML(trade, n) {
+  const items = sfcCostItems(trade);
+  if (!items.length) return "";
+  const q = sfc.costQty[trade] || {};
+  return `
+      <li class="sfc-flow-step"><div class="sfc-flow-n">${n}</div><div class="sfc-flow-body">
+        <p class="sfc-flow-title">Add-on costs</p>
+        <p class="sfc-flow-hint">Quantity of each that applies — leave the rest at 0.</p>
+        <table class="sfc-form sfc-rooftypes">
+          <thead><tr><th class="trade">Item</th><th class="num sqc">Quantity</th><th class="check"></th></tr></thead>
+          <tbody>${items.map((it) => `
+            <tr><td class="trade"><span class="trade-cell">${esc(it.label)}</span></td>
+              <td class="num sqc"><span class="sfc-field"><input class="input sfc-ci-qty" type="number" min="0" step="0.01" inputmode="decimal" data-t="${esc(trade)}" data-k="${esc(it.key)}"
+                value="${q[it.key] != null ? esc(q[it.key]) : ""}" placeholder="0" /><span class="uom">${esc(it.unit)}</span></span></td>
+              <td class="check"></td></tr>`).join("")}</tbody>
+        </table>
+      </div></li>`;
+}
+function costItemsSnapshot(trade) {
+  const q = sfc.costQty[trade] || (sfc.costQty[trade] = {});
+  for (const inp of document.querySelectorAll(`.sfc-ci-qty[data-t="${trade}"]`)) { const v = Number(inp.value); q[inp.dataset.k] = v > 0 ? v : null; }
 }
 
 // ---- gutters: type › LF › size › paint. Super simple. ----
@@ -2169,10 +2218,12 @@ function renderGutterAssumptions(body, nav) {
         <p class="sfc-flow-title">Paint needed?</p>
         <span class="sfc-field sfc-flow-field">${seg("sfc-gt-paint", [["1", "Yes"], ["0", "No"]], g.paint == null ? null : g.paint ? "1" : "0")}</span>
       </div></li>
+      ${costItemsStepHTML("GUTTERS", 5)}
     </ol>
     ${ready ? "" : `<p class="sfc-as-flag on sfc-flow-gate">Select ${esc(missing.join(", "))} to continue.</p>`}`;
   document.getElementById("sfcNextBtn").disabled = !ready;
   const snapshot = () => {
+    costItemsSnapshot("GUTTERS");
     const a = document.getElementById("sfcGtLf"), b = document.getElementById("sfcGtDown");
     g.gutterLf = Number(a.value) > 0 ? Number(a.value) : null;
     g.downLf = Number(b.value) > 0 ? Number(b.value) : null;
@@ -2180,7 +2231,7 @@ function renderGutterAssumptions(body, nav) {
     sfc.measurements.GUTTERS = c ? c.qty : (Math.round(((g.gutterLf || 0) + (g.downLf || 0)) * 100) / 100 || null);
   };
   const rerender = () => { snapshot(); renderGutterAssumptions(body, nav); };
-  for (const el of document.querySelectorAll("#sfcGtLf, #sfcGtDown")) el.addEventListener("change", rerender);
+  for (const el of document.querySelectorAll("#sfcGtLf, #sfcGtDown, .sfc-ci-qty")) el.addEventListener("change", rerender);
   for (const btn of document.querySelectorAll(".sfc-gt-type")) btn.addEventListener("click", () => { snapshot(); g.type = btn.dataset.v; renderGutterAssumptions(body, nav); });
   for (const btn of document.querySelectorAll(".sfc-gt-size")) btn.addEventListener("click", () => { snapshot(); g.size = btn.dataset.v; renderGutterAssumptions(body, nav); });
   for (const btn of document.querySelectorAll(".sfc-gt-paint")) btn.addEventListener("click", () => { snapshot(); g.paint = btn.dataset.v === "1"; renderGutterAssumptions(body, nav); });
@@ -2232,6 +2283,7 @@ function renderSidingAssumptions(body, nav) {
         </table>
         <div class="sfc-as-total">Total siding <b>${esc(total)} SF</b></div>` : `<p class="sfc-flow-hint">Add a siding type first.</p>`}
       </div></li>
+      ${costItemsStepHTML("SIDING", 3)}
     </ol>
     ${needsBid ? `
     <div class="sfc-bid-banner">
@@ -2241,6 +2293,7 @@ function renderSidingAssumptions(body, nav) {
     ${!ready && !bidMissing ? `<p class="sfc-as-flag on sfc-flow-gate">Enter the square feet to continue.</p>` : ""}`;
   document.getElementById("sfcNextBtn").disabled = !ready;
   const snapshot = () => {
+    costItemsSnapshot("SIDING");
     for (const inp of document.querySelectorAll(".sfc-sd-sf")) { const t = sd.types[Number(inp.dataset.i)]; if (t) { const v = Number(inp.value); t.sf = v > 0 ? v : null; } }
     for (const inp of document.querySelectorAll(".sfc-sd-bid")) { const t = sd.types[Number(inp.dataset.i)]; if (t) { const v = Number(inp.value); t.bid = v > 0 ? v : null; } }
     const sf = sfcSidingTotalSf();
@@ -2252,39 +2305,46 @@ function renderSidingAssumptions(body, nav) {
     snapshot(); sd.types.push({ key, sf: null, bid: null }); renderSidingAssumptions(body, nav);
     const last = document.querySelector(".sfc-rooftypes tbody tr:last-child .sfc-sd-sf"); if (last) last.focus();
   });
-  for (const el of document.querySelectorAll(".sfc-sd-sf, .sfc-sd-bid")) el.addEventListener("change", rerender);
+  for (const el of document.querySelectorAll(".sfc-sd-sf, .sfc-sd-bid, .sfc-ci-qty")) el.addEventListener("change", rerender);
   for (const btn of document.querySelectorAll(".sfc-sd-del")) btn.addEventListener("click", () => { snapshot(); sd.types.splice(Number(btn.dataset.i), 1); renderSidingAssumptions(body, nav); });
   sfcWireNav(snapshot, snapshot);
 }
 
 // ---- every other trade: bid pricing only — quantity + management's estimated cost ----
 function renderBidAssumptions(body, nav, g) {
-  const uom = SFC_TRADE_UOM[g.trade] || "EA";
-  const bid = sfc.bids[g.trade], qty = sfc.measurements[g.trade];
-  const ready = Number(bid) > 0;
+  const t = g.trade;
+  const uom = SFC_TRADE_UOM[t] || "EA";
+  const items = sfcCostItems(t);
+  const bid = sfc.bids[t], qty = sfc.measurements[t];
+  const priced = sfcCostItemParts(t).length > 0;
+  const ready = items.length ? priced || Number(bid) > 0 : Number(bid) > 0;
+  let n = 0;
   body.innerHTML = nav + `
     <ol class="sfc-flow">
-      <li class="sfc-flow-step"><div class="sfc-flow-n">1</div><div class="sfc-flow-body">
+      ${items.length ? costItemsStepHTML(t, ++n).replace("Add-on costs", "What applies") : ""}
+      <li class="sfc-flow-step"><div class="sfc-flow-n">${++n}</div><div class="sfc-flow-body">
         <p class="sfc-flow-title">Quantity</p>
         <span class="sfc-field sfc-flow-field"><input id="sfcBidQty" class="input" type="number" min="0" step="0.01" inputmode="decimal" value="${qty != null ? esc(qty) : ""}" placeholder="0" /><span class="uom">${esc(uom)}</span></span>
       </div></li>
-      <li class="sfc-flow-step"><div class="sfc-flow-n">2</div><div class="sfc-flow-body">
-        <p class="sfc-flow-title">Estimated cost</p>
+      <li class="sfc-flow-step"><div class="sfc-flow-n">${++n}</div><div class="sfc-flow-body">
+        <p class="sfc-flow-title">${items.length ? "Anything not listed above — estimated cost" : "Estimated cost"}</p>
         <span class="sfc-field sfc-flow-field"><span class="pl-cur">$</span><input id="sfcBidCost" class="input sfc-rt-bid${ready ? "" : " missing"}" type="number" min="0" step="1" inputmode="decimal" value="${bid != null ? esc(bid) : ""}" placeholder="0" /></span>
       </div></li>
     </ol>
+    ${items.length ? (ready ? "" : `<p class="sfc-as-flag on sfc-flow-gate">Enter a quantity above, or an estimated cost, to continue.</p>`) : `
     <div class="sfc-bid-banner">
-      <b>${esc(g.trade)} IS BID PRICING ONLY; ASK MANAGEMENT FOR ESTIMATED COSTS</b>
+      <b>${esc(t)} IS BID PRICING ONLY; ASK MANAGEMENT FOR ESTIMATED COSTS</b>
       <span>${ready ? "Estimated cost entered — this trade prices with it." : "Enter the estimated cost above to continue."}</span>
-    </div>`;
+    </div>`}`;
   document.getElementById("sfcNextBtn").disabled = !ready;
   const snapshot = () => {
+    costItemsSnapshot(t);
     const q = Number(document.getElementById("sfcBidQty").value), b = Number(document.getElementById("sfcBidCost").value);
-    sfc.measurements[g.trade] = q > 0 ? q : null;
-    sfc.bids[g.trade] = b > 0 ? b : null;
+    sfc.measurements[t] = q > 0 ? q : null;
+    sfc.bids[t] = b > 0 ? b : null;
   };
   const rerender = () => { snapshot(); renderBidAssumptions(body, nav, g); };
-  for (const el of document.querySelectorAll("#sfcBidQty, #sfcBidCost")) el.addEventListener("change", rerender);
+  for (const el of document.querySelectorAll("#sfcBidQty, #sfcBidCost, .sfc-ci-qty")) el.addEventListener("change", rerender);
   sfcWireNav(snapshot, snapshot);
 }
 
@@ -2454,6 +2514,7 @@ const priceListRequested = () => /\/pricelist\/?$/i.test(location.pathname) || /
 const PL_UNITS = ["SQ", "SF", "LF", "EA", "PNL"];
 let plDraft = null; // working copy while the page is open
 let plSeq = 1;
+let plTrade = "ROOF"; // the trade page showing
 function openPriceList() {
   plDraft = JSON.parse(JSON.stringify(priceList));
   document.body.classList.add("pl-mode");
@@ -2489,10 +2550,30 @@ function renderPriceListPage(status) {
     </table>
     <button type="button" class="btn btn-ghost pl-up-add" data-t="${esc(t)}">＋ Add an upgrade to ${esc(t)}</button>`;
   };
+  const costsTable = (t) => {
+    const items = L[t].costs;
+    const rows = items.map((c) => `
+      <tr>
+        <td class="pl-k"><input class="input pl-ci-label" type="text" data-t="${esc(t)}" data-k="${esc(c.key)}" value="${esc(c.label)}" placeholder="Cost item name" /></td>
+        <td class="pl-v"><select class="input pl-ci-unit" data-t="${esc(t)}" data-k="${esc(c.key)}">${PL_UNITS.map((x) => `<option value="${x}" ${x === c.unit ? "selected" : ""}>${x}</option>`).join("")}</select></td>
+        <td class="pl-v"><span class="sfc-field"><span class="pl-cur">$</span><input class="input pl-ci-cost" type="number" min="0" step="0.01" inputmode="decimal" data-t="${esc(t)}" data-k="${esc(c.key)}" value="${esc(c.cost)}" /><span class="uom">/ ${esc(c.unit)}</span></span></td>
+        <td class="check"><button type="button" class="btn btn-ghost btn-lock pl-ci-del" data-t="${esc(t)}" data-k="${esc(c.key)}" title="Remove">✕</button></td>
+      </tr>`).join("");
+    return `
+    <p class="section-label">Cost items <span class="sfc-muted">what SFC pays per unit — each one gets a quantity box on this trade's Assumptions page and adds to its cost</span></p>
+    <table class="disc-table pl-table pl-ups">
+      <thead><tr><th>Name</th><th>Unit</th><th>SFC cost</th><th></th></tr></thead>
+      <tbody>${rows || `<tr><td class="pl-k sfc-muted" colspan="4">No cost items on this trade yet.</td></tr>`}</tbody>
+    </table>
+    <button type="button" class="btn btn-ghost pl-ci-add" data-t="${esc(t)}">＋ Add a cost item to ${esc(t)}</button>`;
+  };
+  const tabs = `<nav class="pl-tabs" aria-label="Trades">${PRICEABLE_TRADES.map((t) =>
+    `<button type="button" class="pl-tab${t === plTrade ? " current" : ""}" data-t="${esc(t)}"><span class="trade-swatch" style="background:${TRADE_COLORS[t] || "#94a3b8"}"></span>${esc(t)}</button>`).join("")}</nav>`;
   const card = (t, inner) => `
     <section class="pl-trade">
       <h2><span class="trade-swatch" style="background:${TRADE_COLORS[t] || "#94a3b8"}"></span>${esc(t)} <span class="sfc-muted">per ${esc(SFC_TRADE_UOM[t])}</span></h2>
       ${inner}
+      ${costsTable(t)}
       ${upgradesTable(t)}
     </section>`;
   const roof = `
@@ -2514,9 +2595,10 @@ function renderPriceListPage(status) {
     <table class="disc-table pl-table"><tbody>
       ${L.SIDING.types.map((t) => row(esc(t.label), t.bid ? `<td class="pl-v"><span class="sfc-muted">requires bid</span></td>` : inp("pl-sd-type", t.key, t.cost, "SF", 0.01))).join("")}
     </tbody></table>`;
-  const bidOnly = (t) => `<p class="pl-bidnote">Bid pricing only — the cost comes from management's estimate on the Assumptions page.</p>`;
+  const bidOnly = (t) => `<p class="pl-bidnote">No built-in rates for ${esc(t)}: it is bid pricing from management's estimate on the Assumptions page, plus any cost items you add below.</p>`;
+  const t0 = plTrade;
   document.getElementById("priceListBody").innerHTML =
-    PRICEABLE_TRADES.map((t) => card(t, t === "ROOF" ? roof : t === "GUTTERS" ? gutters : t === "SIDING" ? siding : bidOnly(t))).join("");
+    tabs + card(t0, t0 === "ROOF" ? roof : t0 === "GUTTERS" ? gutters : t0 === "SIDING" ? siding : bidOnly(t0));
   document.getElementById("plStatus").textContent = status || "";
   document.getElementById("plStatus").classList.toggle("ok", /saved|restored/i.test(status || ""));
 
@@ -2531,12 +2613,31 @@ function renderPriceListPage(status) {
     const six = document.querySelector(".pl-gt-six"); if (six) L.GUTTERS.sixInch.cost = n(six, L.GUTTERS.sixInch.cost);
     const pt = document.querySelector(".pl-gt-paint"); if (pt) L.GUTTERS.paint.cost = n(pt, L.GUTTERS.paint.cost);
     for (const el of document.querySelectorAll(".pl-sd-type")) { const t = L.SIDING.types.find((x) => x.key === el.dataset.key); if (t) t.cost = n(el, t.cost); }
+    const ci = (el) => (L[el.dataset.t].costs || []).find((c) => c.key === el.dataset.k);
+    for (const el of document.querySelectorAll(".pl-ci-label")) { const c = ci(el); if (c && el.value.trim()) c.label = el.value.trim(); }
+    for (const el of document.querySelectorAll(".pl-ci-unit")) { const c = ci(el); if (c) c.unit = el.value; }
+    for (const el of document.querySelectorAll(".pl-ci-cost")) { const c = ci(el); if (c) c.cost = n(el, c.cost); }
     const up = (el) => (L[el.dataset.t].upgrades || []).find((u) => u.key === el.dataset.k);
     for (const el of document.querySelectorAll(".pl-up-label")) { const u = up(el); if (u && el.value.trim()) u.label = el.value.trim(); }
     for (const el of document.querySelectorAll(".pl-up-unit")) { const u = up(el); if (u && !el.disabled) u.unit = el.value; }
     for (const el of document.querySelectorAll(".pl-up-price")) { const u = up(el); if (u) u.price = n(el, u.price); }
     for (const el of document.querySelectorAll(".pl-up-cost")) { const u = up(el); if (u) u.cost = n(el, u.cost); }
   };
+  for (const btn of document.querySelectorAll(".pl-tab")) btn.addEventListener("click", () => {
+    snapshot(); plTrade = btn.dataset.t; renderPriceListPage(document.getElementById("plStatus").textContent); window.scrollTo(0, 0);
+  });
+  for (const btn of document.querySelectorAll(".pl-ci-add")) btn.addEventListener("click", () => {
+    snapshot();
+    const t = btn.dataset.t;
+    plDraft[t].costs.push({ key: `k${Date.now().toString(36)}${plSeq++}`, label: "", unit: SFC_TRADE_UOM[t] || "EA", cost: 0 });
+    renderPriceListPage("Unsaved changes");
+    const inputs = document.querySelectorAll(`.pl-ci-label[data-t="${t}"]`); const last = inputs[inputs.length - 1]; if (last) last.focus();
+  });
+  for (const btn of document.querySelectorAll(".pl-ci-del")) btn.addEventListener("click", () => {
+    snapshot();
+    plDraft[btn.dataset.t].costs = plDraft[btn.dataset.t].costs.filter((c) => c.key !== btn.dataset.k);
+    renderPriceListPage("Unsaved changes");
+  });
   for (const btn of document.querySelectorAll(".pl-up-add")) btn.addEventListener("click", () => {
     snapshot();
     const t = btn.dataset.t;
@@ -2549,11 +2650,11 @@ function renderPriceListPage(status) {
     plDraft[btn.dataset.t].upgrades = plDraft[btn.dataset.t].upgrades.filter((u) => u.key !== btn.dataset.k);
     renderPriceListPage("Unsaved changes");
   });
-  for (const el of document.querySelectorAll(".pl-up-unit, .pl-shingle, .pl-up-price")) el.addEventListener("change", () => { snapshot(); renderPriceListPage("Unsaved changes"); });
+  for (const el of document.querySelectorAll(".pl-up-unit, .pl-ci-unit, .pl-shingle, .pl-up-price")) el.addEventListener("change", () => { snapshot(); renderPriceListPage("Unsaved changes"); });
   for (const el of document.querySelectorAll("#priceListBody input")) el.addEventListener("input", () => { document.getElementById("plStatus").textContent = "Unsaved changes"; document.getElementById("plStatus").classList.remove("ok"); });
   document.getElementById("plSaveBtn").onclick = () => {
     snapshot();
-    for (const t of PRICEABLE_TRADES) plDraft[t].upgrades = plDraft[t].upgrades.filter((u) => !u.custom || u.label);
+    for (const t of PRICEABLE_TRADES) { plDraft[t].upgrades = plDraft[t].upgrades.filter((u) => !u.custom || u.label); plDraft[t].costs = plDraft[t].costs.filter((c) => c.label); }
     priceListSave(JSON.parse(JSON.stringify(plDraft)));
     renderPriceListPage(`Saved to this browser · ${new Date().toLocaleTimeString("en-US")}`);
   };

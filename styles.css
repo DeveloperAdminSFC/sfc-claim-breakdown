@@ -1195,3 +1195,8 @@ body.sfc-open { overflow: hidden; }
 .pl-ups th.check, .pl-ups td.check { width: 48px; text-align: center; }
 .pl-up-add { margin-top: 8px; height: 38px; }
 .pl-bidnote { font-size: 13.5px; color: var(--ink-soft); margin: 4px 0 0; }
+.pl-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0 4px; }
+.pl-tab { display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 14px; border: 1px solid var(--rule-strong); border-radius: 999px; background: #fff; font: inherit; font-size: 13.5px; font-weight: 700; color: var(--ink-soft); cursor: pointer; }
+.pl-tab:hover { background: var(--wash); }
+.pl-tab.current { background: var(--accent); border-color: var(--accent); color: #fff; }
+.pl-trade { border-bottom: 0; }
