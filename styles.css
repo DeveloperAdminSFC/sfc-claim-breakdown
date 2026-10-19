@@ -593,12 +593,14 @@ body {
 .summary.sfc-payout.snap thead tr:first-child th:nth-child(3),
 .summary.sfc-payout.snap thead tr:first-child th:nth-child(4),
 .summary.sfc-payout.snap thead tr:first-child th:nth-child(5),
-.summary.sfc-payout.snap thead tr:first-child th:nth-child(6) { border-left: 2px solid #000; }
-.summary.sfc-payout.snap thead tr:first-child th:nth-child(6) { border-right: 2px solid #000; }
+.summary.sfc-payout.snap thead tr:first-child th:nth-child(6),
+.summary.sfc-payout.snap thead tr:first-child th:nth-child(7) { border-left: 2px solid #000; }
+.summary.sfc-payout.snap thead tr:first-child th:nth-child(7) { border-right: 2px solid #000; }
 .summary.sfc-payout.snap thead tr:first-child th:nth-child(3) { border-top: 2px solid #000; }
 .summary.sfc-payout.snap thead tr:first-child th:nth-child(4),
 .summary.sfc-payout.snap thead tr:first-child th:nth-child(5),
-.summary.sfc-payout.snap thead tr:first-child th:nth-child(6) { border-top: 2px solid #000; }
+.summary.sfc-payout.snap thead tr:first-child th:nth-child(6),
+.summary.sfc-payout.snap thead tr:first-child th:nth-child(7) { border-top: 2px solid #000; }
 .summary.sfc-payout.snap thead tr:last-child th:first-child { border-left: 2px solid #000; }
 .summary.sfc-payout.snap thead tr:last-child th:last-child { border-right: 2px solid #000; }
 .summary.sfc-payout.snap thead th.group { border-bottom: 1px solid var(--rule); }
@@ -606,12 +608,14 @@ body {
 .summary.sfc-payout.snap tbody td:nth-child(5),
 .summary.sfc-payout.snap tbody td:nth-child(6),
 .summary.sfc-payout.snap tbody td:nth-child(7),
+.summary.sfc-payout.snap tbody td:nth-child(8),
 .summary.sfc-payout.snap tfoot td:nth-child(3),
 .summary.sfc-payout.snap tfoot td:nth-child(5),
 .summary.sfc-payout.snap tfoot td:nth-child(6),
-.summary.sfc-payout.snap tfoot td:nth-child(7) { border-left: 2px solid #000; }
-.summary.sfc-payout.snap tbody td:nth-child(7),
-.summary.sfc-payout.snap tfoot td:nth-child(7) { border-right: 2px solid #000; }
+.summary.sfc-payout.snap tfoot td:nth-child(7),
+.summary.sfc-payout.snap tfoot td:nth-child(8) { border-left: 2px solid #000; }
+.summary.sfc-payout.snap tbody td:nth-child(8),
+.summary.sfc-payout.snap tfoot td:nth-child(8) { border-right: 2px solid #000; }
 .summary.sfc-payout.snap tfoot td { border-bottom: 2px solid #000; }
 .summary.sfc-payout.snap thead th { border-bottom: 2px solid #000; }
 .summary.sfc-payout.snap thead tr:first-child th[rowspan] { border-bottom: 2px solid #000; }
@@ -1153,3 +1157,7 @@ body.sfc-open { overflow: hidden; }
 .sfc-form td.cost .sfc-bidreq { display: block; width: max-content; font-size: 12px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--neg); margin-bottom: 6px; }
 .sfc-flow-pair { display: flex; flex-wrap: wrap; gap: 10px 32px; margin-bottom: 6px; }
 .sfc-flow-k { font-size: 14px; font-weight: 600; color: var(--ink-soft); min-width: 140px; }
+.sfc-rooftypes { max-width: 760px; }
+.sfc-rooftypes th.bidc, .sfc-rooftypes td.bidc { width: 30%; }
+.sfc-rooftypes .sfc-rt-bid { width: 150px; text-align: right; }
+.sfc-rooftypes .sfc-rt-bid.missing { border-color: var(--neg); background: #fef2f2; }
