@@ -1072,7 +1072,7 @@ body.sfc-open { overflow: hidden; }
    claim summary plus the estimate, with the summary page twice). A closed window must never
    reach the paper: same id specificity plus the attribute, declared last. */
 @media print {
-  #summaryModal[hidden], #sfcModal[hidden], #discrepancyModal { display: none !important; }
+  #summaryModal[hidden], #sfcModal[hidden], #discrepancyModal, #priceListModal { display: none !important; }
 }
 
 /* Preliminary pricing: bold notice at the bottom of the sheet */
@@ -1083,3 +1083,46 @@ body.sfc-open { overflow: hidden; }
   #sfcBody .ho-notice { margin-top: 22px; break-inside: avoid; page-break-inside: avoid; break-before: avoid; page-break-before: avoid; }
   #sfcBody .ho-notice p { font-size: 11.5px; }
 }
+
+/* ---- Pricing assumptions card (price-list trades: ROOF) ---- */
+.sfc-assume { border: 1px solid var(--rule-strong); border-radius: 8px; background: var(--paper); padding: 14px 16px 12px; margin: 0 0 18px; }
+.sfc-assume-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; }
+.sfc-assume-head .section-label { margin: 0; }
+.sfc-assume-head .sfc-muted { text-transform: none; letter-spacing: 0; font-weight: 500; }
+.sfc-assume-grid { display: grid; grid-template-columns: 1.25fr 1fr 1fr; gap: 10px 28px; }
+.sfc-as-title { font-size: 11px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--ink-faint); margin: 0 0 4px; padding-bottom: 6px; border-bottom: 1px solid var(--rule); }
+.sfc-as-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 5px 0; font-size: 15px; font-weight: 600; color: var(--ink); }
+.sfc-as-row .sfc-as-k em { display: block; font-style: normal; font-size: 11.5px; font-weight: 600; color: var(--ink-faint); }
+.sfc-as-row .sfc-field { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+.sfc-as-row .input { width: 104px; height: 40px; font-size: 16px; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+.sfc-as-row .uom { display: inline-block; width: 30px; color: var(--ink-faint); font-size: 12px; font-weight: 700; letter-spacing: 0.04em; }
+.sfc-as-check { justify-content: flex-start; }
+.sfc-as-check .sfc-on { width: 20px; height: 20px; accent-color: var(--accent); cursor: pointer; }
+.sfc-as-total { text-align: right; font-size: 13px; color: var(--ink-soft); padding-top: 4px; }
+.sfc-as-total b { font-size: 15px; color: var(--ink); }
+.sfc-as-flag { font-size: 12.5px; font-weight: 600; color: var(--ink-faint); padding-top: 4px; }
+.sfc-as-flag.on { color: var(--neg); }
+.sfc-assume-foot { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--rule); font-size: 13px; color: var(--ink-soft); }
+.sfc-assume-foot b { color: var(--ink); }
+.sfc-as-sum { margin-left: auto; font-size: 14px; color: var(--ink); }
+.sfc-as-sum b { font-size: 17px; }
+/* Upgrades table, 6 columns: list rows show a quantity, computed price and cost. */
+.sfc-upgrades-6 th.trade, .sfc-upgrades-6 td.trade { width: 15%; }
+.sfc-upgrades-6 th.uq, .sfc-upgrades-6 td.uq { width: 17%; }
+.sfc-upgrades-6 th.up, .sfc-upgrades-6 th.uc { width: 15%; }
+.sfc-upgrades .sfc-up-qty { width: 92px; min-width: 0; text-align: right; }
+.sfc-upgrades td.uq .sfc-field { justify-content: flex-end; }
+.sfc-upgrades td.sfc-up-calc { font-weight: 700; color: var(--ink); white-space: nowrap; }
+.sfc-upgrades td.sfc-up-calc .sfc-muted { font-weight: 500; }
+.sfc-upgrades .sfc-warn { color: var(--neg); font-weight: 600; font-size: 12.5px; }
+.sfc-up-pick { height: 42px; font-size: 15px; font-weight: 600; width: 380px; text-align: left; padding: 0 10px; }
+/* Price list panel */
+.pl-table .pl-k { font-weight: 600; color: var(--ink); }
+.pl-table th { text-align: left; font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-faint); padding: 4px 10px; }
+.pl-table .pl-v { white-space: nowrap; }
+.pl-table .sfc-field { display: inline-flex; align-items: center; gap: 6px; }
+.pl-table .input { width: 92px; height: 36px; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+.pl-table .pl-pitch { width: 56px; height: 32px; text-align: right; margin: 0 4px; }
+.pl-table .uom { color: var(--ink-faint); font-size: 11.5px; font-weight: 700; }
+.pl-cur { color: var(--ink-faint); font-weight: 600; }
+.pl-panel .section-label { margin: 14px 0 6px; }

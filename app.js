@@ -1483,6 +1483,97 @@ const SFC_TRADE_SERVICE = {
 const sfcServiceName = (t) =>
   SFC_TRADE_SERVICE[t] || `${String(t).toLowerCase().replace(/\b\w/g, (ch) => ch.toUpperCase())} Services`;
 
+// ---- price list: SFC cost levers + fixed upgrade prices ----
+// Yash's rule (2026-10-19): production managers price from THIS list, not from median margins.
+// "cost" is what the work costs SFC per unit; an upgrade's "price" is what the homeowner is
+// charged per unit — never typed, only the quantity is. Editable in the Price list panel
+// (saved in this browser; Reset restores these defaults). Shingle roofs only for now.
+const PRICE_LIST_VERSION = 1;
+const PRICE_LIST_KEY = "sfc-claim-breakdown.priceList.v1";
+const PRICE_LIST_DEFAULT = {
+  ROOF: {
+    // Base install cost per square by shingle class. A roof can mix classes (squares of each).
+    shingles: [
+      { key: "class2", label: "Class 2 shingle", cost: 350 },
+      { key: "class3", label: "Class 3 shingle", cost: 380 },
+      { key: "class4", label: "Class 4 shingle", cost: 425 },
+    ],
+    // Steep slope: every square costs this much more once the pitch reaches fromPitch/12.
+    steep: { fromPitch: 8, cost: 30 },
+    redecking: { cost: 80 },
+    // Upgrades charged to the homeowner. costIn = the SFC cost already sits in that assumption
+    // above (so the upgrade adds price, not cost). qtyFrom = quantity follows the assumptions
+    // until the estimator types one.
+    upgrades: [
+      { key: "class3", label: "Class 3 Upgrade", unit: "SQ", price: 60, cost: 0, costIn: "shingle type", qtyFrom: "class3" },
+      { key: "class4", label: "Class 4 Upgrade", unit: "SQ", price: 150, cost: 0, costIn: "shingle type", qtyFrom: "class4" },
+      { key: "redecking", label: "Redecking", unit: "SQ", price: 120, cost: 0, costIn: "redecking", qtyFrom: "redecking" },
+      { key: "ridgevent", label: "Ridge Vent Installation", unit: "LF", price: 20, cost: 0 },
+      { key: "warranty", label: "Warranty (Tamko)", unit: "SQ", price: 200, cost: 75, qtyFrom: "total" },
+      { key: "iws", label: "Full IWS", unit: "SQ", price: 80, cost: 40, qtyFrom: "total" },
+    ],
+  },
+};
+const priceListClone = () => JSON.parse(JSON.stringify(PRICE_LIST_DEFAULT));
+// Saved overrides (numbers only) laid over the defaults, so new list entries show up later.
+function priceListApply(base, o) {
+  const num = (v, d) => (v == null || v === "" || !Number.isFinite(Number(v)) ? d : Number(v));
+  const R = o.ROOF || {};
+  for (const sh of base.ROOF.shingles) if (R.shingles && R.shingles[sh.key] != null) sh.cost = num(R.shingles[sh.key], sh.cost);
+  if (R.steep) { base.ROOF.steep.fromPitch = num(R.steep.fromPitch, base.ROOF.steep.fromPitch); base.ROOF.steep.cost = num(R.steep.cost, base.ROOF.steep.cost); }
+  if (R.redecking) base.ROOF.redecking.cost = num(R.redecking.cost, base.ROOF.redecking.cost);
+  for (const u of base.ROOF.upgrades) { const x = R.upgrades && R.upgrades[u.key]; if (x) { u.price = num(x.price, u.price); u.cost = num(x.cost, u.cost); } }
+}
+function priceListLoad() {
+  const base = priceListClone();
+  try { const saved = JSON.parse(localStorage.getItem(PRICE_LIST_KEY) || "null"); if (saved && saved.ROOF) priceListApply(base, saved); } catch (_) { /* defaults */ }
+  return base;
+}
+function priceListOverrides(L) {
+  return { version: PRICE_LIST_VERSION, ROOF: {
+    shingles: Object.fromEntries(L.ROOF.shingles.map((sh) => [sh.key, sh.cost])),
+    steep: { ...L.ROOF.steep }, redecking: { ...L.ROOF.redecking },
+    upgrades: Object.fromEntries(L.ROOF.upgrades.map((u) => [u.key, { price: u.price, cost: u.cost }])),
+  } };
+}
+let priceList = priceListLoad();
+function priceListSave(L) { priceList = L; try { localStorage.setItem(PRICE_LIST_KEY, JSON.stringify(priceListOverrides(L))); } catch (_) { /* private mode */ } }
+function priceListReset() { priceList = priceListClone(); try { localStorage.removeItem(PRICE_LIST_KEY); } catch (_) { /* private mode */ } }
+const sfcHasPriceList = (trade) => !!priceList[trade];
+const sfcRoofDefaults = () => ({ class2: null, class3: null, class4: null, pitch: "", redeck: false, redeckSq: null });
+// "7", "7/12", "7:12", "7.5/12" → 7 / 7.5; null when nothing numeric was typed.
+function parsePitch(v) { const m = /(\d+(?:\.\d+)?)/.exec(String(v == null ? "" : v)); return m ? Number(m[1]) : null; }
+// Roof assumptions → SFC cost. null until at least one square is entered.
+function sfcRoofCost() {
+  const L = priceList.ROOF, r = sfc.roof || sfcRoofDefaults();
+  const sqOf = (k) => Math.max(0, Number(r[k]) || 0);
+  const parts = L.shingles.map((sh) => ({ key: sh.key, label: sh.label, sq: sqOf(sh.key), rate: sh.cost, cost: sqOf(sh.key) * sh.cost })).filter((p) => p.sq > 0);
+  const sq = Math.round(parts.reduce((a, p) => a + p.sq, 0) * 100) / 100;
+  if (!(sq > 0)) return null;
+  const pitch = parsePitch(r.pitch);
+  const steep = pitch != null && pitch >= L.steep.fromPitch;
+  if (steep) parts.push({ key: "steep", label: `Steep slope ${pitch}/12`, sq, rate: L.steep.cost, cost: sq * L.steep.cost });
+  const redeckSq = r.redeck ? sqOf("redeckSq") : 0;
+  if (redeckSq > 0) parts.push({ key: "redecking", label: "Redecking", sq: redeckSq, rate: L.redecking.cost, cost: redeckSq * L.redecking.cost });
+  const cost = parts.reduce((a, p) => a + p.cost, 0);
+  return { sq, pitch, steep, redeckSq, parts, cost, perSq: cost / sq };
+}
+// Upgrades picked from the list carry a key + quantity; price and cost are computed from the
+// list every time they are read, so a price-list edit flows through automatically.
+function sfcUpgradeSpec(u) { const L = priceList[u.trade]; return u.key && L ? L.upgrades.find((x) => x.key === u.key) || null : null; }
+function sfcUpgradeAutoQty(spec) {
+  if (!spec.qtyFrom || spec.unit !== "SQ") return null;
+  const rc = sfcRoofCost(); if (!rc) return null;
+  if (spec.qtyFrom === "total") return rc.sq;
+  if (spec.qtyFrom === "redecking") return rc.redeckSq || null;
+  const sq = Number((sfc.roof || {})[spec.qtyFrom]) || 0; return sq > 0 ? sq : null;
+}
+function sfcResolveUpgrade(u) {
+  const spec = sfcUpgradeSpec(u); if (!spec) return u;
+  const qty = u.qty != null ? u.qty : sfcUpgradeAutoQty(spec) || 0;
+  return { ...u, qty, price: qty * spec.price, cost: qty * spec.cost, description: `${spec.label}${qty > 0 ? ` (${qty} ${spec.unit})` : ""}` };
+}
+
 // credits: lineKey -> true when the line's ACV is credited (line leaves the contracted scope).
 // lineKey = the line's index in state.items — stable for one parsed claim; itemsRef remembers
 // which claim the state belongs to so a new upload starts clean.
@@ -1492,16 +1583,20 @@ let sfc = {
   pricing: null, measurements: {}, bids: {}, unlocked: {}, rateEdits: {}, mode: {}, client: "", perUnit: false,
   rates: null, credits: {}, deductible: null, step: 0, itemsRef: null,
   upgrades: [], marketingCredits: [],
+  roof: { class2: null, class3: null, class4: null, pitch: "", redeck: false, redeckSq: null }, // pricing assumptions (price list)
 };
 let sfcSeq = 1;
 
 function sfcIsBid(trade) {
   return SFC_BID_TRADES.has(trade) || !sfcRateFor(trade);
 }
-// How a trade is priced: "measure" (history rate × measurement) or "bid" (typed cost). The
-// default is bid for the bid trades and for any trade with no usable history.
+// How a trade is priced: "list" (the price list — the only option besides bid for trades that
+// have one), "measure" (history rate × measurement) or "bid" (typed cost). The default is the
+// list where there is one, bid for the bid trades and for any trade with no usable history.
 function sfcMode(trade) {
-  if (sfc.mode[trade] === "measure" || sfc.mode[trade] === "bid") return sfc.mode[trade];
+  const m = sfc.mode[trade];
+  if (sfcHasPriceList(trade)) return m === "bid" ? "bid" : "list";
+  if (m === "measure" || m === "bid") return m;
   return sfcIsBid(trade) ? "bid" : "measure";
 }
 
@@ -1578,7 +1673,7 @@ function sfcCreditedLines() {
 
 // ---- upgrades, marketing, contractor pricing ----
 function sfcUpgradesFor(trade) {
-  return sfc.upgrades.filter((u) => u.trade === trade);
+  return sfc.upgrades.filter((u) => u.trade === trade).map(sfcResolveUpgrade);
 }
 function sfcMarketingTotal() {
   return sfc.marketingCredits.reduce((a, m) => a + (Number(m.amount) || 0), 0);
@@ -1605,10 +1700,14 @@ function sfcPriceRows() {
       const upCost = ups.reduce((a, u) => a + (Number(u.cost) || 0), 0);
       const contracted = c.rcv + upPrice;
       const uom = SFC_TRADE_UOM[g.trade];
-      const meas = sfc.measurements[g.trade];
+      const roofList = g.trade === "ROOF" && sfcMode("ROOF") === "list" ? sfcRoofCost() : null;
+      const meas = roofList ? roofList.sq : sfc.measurements[g.trade];
       let cost = null, priced = false;
       if (c.rcv > 0 && !sfcIsClaimOnly(g.trade)) {
-        if (sfcMode(g.trade) === "bid") {
+        if (sfcMode(g.trade) === "list") {
+          priced = !!roofList; // price list: cost from the roof assumptions
+          cost = priced ? roofList.cost + upCost : null;
+        } else if (sfcMode(g.trade) === "bid") {
           const bid = sfc.bids[g.trade];
           priced = bid != null && bid > 0;
           cost = priced ? bid + upCost : null;
@@ -1663,7 +1762,7 @@ async function openSfcEstimate() {
   if (sfc.itemsRef !== state.items) {
     sfc.itemsRef = state.items;
     sfc.credits = {}; sfc.measurements = {}; sfc.bids = {}; sfc.unlocked = {}; sfc.rateEdits = {}; sfc.mode = {};
-    sfc.deductible = null; sfc.client = ""; sfc.upgrades = []; sfc.marketingCredits = [];
+    sfc.deductible = null; sfc.client = ""; sfc.upgrades = []; sfc.marketingCredits = []; sfc.roof = sfcRoofDefaults();
   }
   if (!sfc.client && state.jobInfo && state.jobInfo.contact_name) sfc.client = state.jobInfo.contact_name;
   const md = state.summary || {};
@@ -1811,6 +1910,7 @@ function renderSfcTrade(g, idx, n) {
 // ---- step: pricing ----
 function renderSfcPricing() {
   const groups = sfcJobTrades();
+  const roofCost = sfcRoofCost();
   const rows = groups
     .map((g) => {
       const c = sfcContracted(g);
@@ -1832,11 +1932,26 @@ function renderSfcPricing() {
       <tr class="sfc-claimonly">${tradeCell}<td class="num rcv">${fmtUSD(c.rcv)}</td><td class="num meas"></td>
         <td class="cost"><span class="sfc-rate"><em>claim only</em></span></td></tr>`;
       }
-      const bid = sfcMode(g.trade) === "bid";
+      const mode = sfcMode(g.trade);
       const modeSwitch = `<span class="sfc-mode" role="group" aria-label="Price by">
-          <button type="button" class="sfc-mode-btn sfc-mode-measure" data-trade="${esc(g.trade)}" aria-pressed="${!bid}">Measure</button>
-          <button type="button" class="sfc-mode-btn sfc-mode-bid" data-trade="${esc(g.trade)}" aria-pressed="${bid}">Bid</button>
+          ${sfcHasPriceList(g.trade)
+            ? `<button type="button" class="sfc-mode-btn sfc-mode-list" data-trade="${esc(g.trade)}" aria-pressed="${mode === "list"}">Price list</button>`
+            : `<button type="button" class="sfc-mode-btn sfc-mode-measure" data-trade="${esc(g.trade)}" aria-pressed="${mode === "measure"}">Measure</button>`}
+          <button type="button" class="sfc-mode-btn sfc-mode-bid" data-trade="${esc(g.trade)}" aria-pressed="${mode === "bid"}">Bid</button>
         </span>`;
+      if (mode === "list") {
+        // ROOF from the price list: squares come from the assumptions card, cost is computed.
+        const rc = g.trade === "ROOF" ? roofCost : null;
+        return `
+      <tr>${tradeCell}
+        <td class="num rcv">${fmtUSD(c.rcv)}</td>
+        <td class="num meas"><span class="sfc-field"><span class="sfc-rate">${rc ? `<b>${esc(rc.sq)}</b>` : "<em>from assumptions</em>"}</span><span class="uom">${esc(uom)}</span></span></td>
+        <td class="cost">${modeSwitch}${rc
+          ? `<span class="sfc-field"><span class="sfc-rate"><b>${fmtRate(rc.perSq)}</b> / ${esc(uom)} · ${fmtUSD(rc.cost)}</span></span>`
+          : `<span class="sfc-field"><span class="sfc-rate"><em>enter the shingle squares above</em></span></span>`}</td>
+      </tr>`;
+      }
+      const bid = mode === "bid";
       const unlocked = !!sfc.unlocked[g.trade];
       const median = rate ? Math.round(rate.cost.median * 100) / 100 : null;
       const rateVal = sfc.rateEdits[g.trade] != null ? sfc.rateEdits[g.trade] : median;
@@ -1865,17 +1980,82 @@ function renderSfcPricing() {
       </tr>`;
     })
     .join("");
+
+  // Roof pricing assumptions — the SFC cost levers (shingle class squares, pitch, redecking).
+  const roofG = groups.find((g) => g.trade === "ROOF");
+  const roofCard = roofG && roofG.items.length && sfcContracted(roofG).rcv > 0 && sfcMode("ROOF") === "list" ? (() => {
+    const L = priceList.ROOF, r = sfc.roof;
+    const pitch = parsePitch(r.pitch);
+    const steep = pitch != null && pitch >= L.steep.fromPitch;
+    const shingleInputs = L.shingles.map((sh) => `
+        <label class="sfc-as-row"><span class="sfc-as-k">${esc(sh.label)} <em>${fmtRate(sh.cost)} / SQ</em></span>
+          <span class="sfc-field"><input class="input sfc-roof-sq" type="number" min="0" step="0.01" inputmode="decimal" data-key="${sh.key}"
+            value="${r[sh.key] != null ? esc(r[sh.key]) : ""}" placeholder="0" /><span class="uom">SQ</span></span></label>`).join("");
+    const parts = roofCost ? roofCost.parts.map((p) => `<span>${esc(p.label)} ${esc(p.sq)} SQ × ${fmtRate(p.rate)} = <b>${fmtUSD(p.cost)}</b></span>`).join("") : "";
+    return `
+    <div class="sfc-assume">
+      <div class="sfc-assume-head">
+        <p class="section-label">Roof · pricing assumptions <span class="sfc-muted">SFC cost levers from the price list — shingle roofs</span></p>
+      </div>
+      <div class="sfc-assume-grid">
+        <div class="sfc-as-col"><p class="sfc-as-title">Shingle type &amp; squares</p>${shingleInputs}
+          <div class="sfc-as-total">Total <b>${roofCost ? esc(roofCost.sq) : 0} SQ</b></div></div>
+        <div class="sfc-as-col"><p class="sfc-as-title">Pitch</p>
+          <label class="sfc-as-row"><span class="sfc-as-k">Roof pitch <em>steep from ${esc(L.steep.fromPitch)}/12: +${fmtRate(L.steep.cost)} / SQ</em></span>
+            <span class="sfc-field"><input id="sfcRoofPitch" class="input" type="text" inputmode="decimal" value="${esc(r.pitch || "")}" placeholder="7" /><span class="uom">/12</span></span></label>
+          <div class="sfc-as-flag${steep ? " on" : ""}">${pitch == null ? "Enter the pitch" : steep ? `Steep slope — +${fmtRate(L.steep.cost)} / SQ on every square` : "Walkable — no steep charge"}</div></div>
+        <div class="sfc-as-col"><p class="sfc-as-title">Redecking</p>
+          <label class="sfc-as-row sfc-as-check"><input id="sfcRoofRedeck" type="checkbox" class="sfc-on" ${r.redeck ? "checked" : ""} /><span class="sfc-as-k">Redecking required? <em>${fmtRate(L.redecking.cost)} / SQ</em></span></label>
+          <label class="sfc-as-row"><span class="sfc-as-k">Squares to redeck</span>
+            <span class="sfc-field"><input id="sfcRoofRedeckSq" class="input" type="number" min="0" step="0.01" inputmode="decimal"
+              value="${r.redeckSq != null ? esc(r.redeckSq) : ""}" placeholder="0" ${r.redeck ? "" : "disabled"} /><span class="uom">SQ</span></span></label></div>
+      </div>
+      <div class="sfc-assume-foot">${roofCost
+        ? `${parts}<span class="sfc-as-sum">SFC roof cost <b>${fmtUSD(roofCost.cost)}</b> · ${fmtRate(roofCost.perSq)} / SQ</span>`
+        : `<span>Enter the squares by shingle class to price the roof.</span>`}</div>
+    </div>`;
+  })() : "";
+
   const tradeOptions = (sel) =>
     [...new Set([...TRADE_ORDER, ...groups.map((g) => g.trade)])]
       .map((t) => `<option value="${esc(t)}" ${t === sel ? "selected" : ""}>${esc(t)}</option>`).join("");
-  const upgradeRows = sfc.upgrades.map((u) => `
+  const upgradeRows = sfc.upgrades.map((u) => {
+    const spec = sfcUpgradeSpec(u);
+    if (spec) {
+      const ru = sfcResolveUpgrade(u);
+      const auto = sfcUpgradeAutoQty(spec);
+      const costCell = spec.costIn
+        ? `<span class="sfc-muted" title="SFC cost is already in the ${esc(spec.costIn)} assumption above">in ${esc(spec.costIn)}</span>`
+        : spec.cost > 0
+          ? `${fmtUSD(ru.cost)} <span class="sfc-muted">${fmtRate(spec.cost)}/${esc(spec.unit)}</span>`
+          : `<span class="sfc-warn" title="Set this upgrade's SFC cost in the price list">no SFC cost set</span>`;
+      return `
+      <tr data-id="${u.id}" class="sfc-up-list">
+        <td class="trade"><span class="trade-cell"><span class="trade-swatch" style="background:${TRADE_COLORS[u.trade] || "#94a3b8"}"></span>${esc(u.trade)}</span></td>
+        <td><b>${esc(spec.label)}</b> <span class="sfc-muted">${fmtRate(spec.price)}/${esc(spec.unit)}</span></td>
+        <td class="num uq"><span class="sfc-field"><input class="input sfc-up-qty" type="number" min="0" step="0.01" inputmode="decimal" data-id="${u.id}"
+            value="${u.qty != null ? esc(u.qty) : ""}" placeholder="${auto != null ? esc(auto) : "0"}" title="${auto != null ? "Blank follows the roof assumptions" : ""}" /><span class="uom">${esc(spec.unit)}</span></span></td>
+        <td class="num sfc-up-calc">${fmtUSD(ru.price)}</td>
+        <td class="num sfc-up-calc">${costCell}</td>
+        <td class="check"><button type="button" class="btn btn-ghost btn-lock sfc-up-del" data-id="${u.id}" title="Remove">✕</button></td>
+      </tr>`;
+    }
+    return `
       <tr data-id="${u.id}">
-        <td><select class="input sfc-up-trade" data-id="${u.id}">${tradeOptions(u.trade)}</select></td>
-        <td><input class="input input-wide sfc-up-desc" type="text" data-id="${u.id}" value="${esc(u.description || "")}" placeholder="e.g. Class 4 upgrade" /></td>
+        <td class="trade"><select class="input sfc-up-trade" data-id="${u.id}">${tradeOptions(u.trade)}</select></td>
+        <td><input class="input input-wide sfc-up-desc" type="text" data-id="${u.id}" value="${esc(u.description || "")}" placeholder="Custom upgrade" /></td>
+        <td class="num uq"></td>
         <td class="num"><input class="input sfc-up-price" type="number" min="0" step="1" inputmode="decimal" data-id="${u.id}" value="${u.price ? esc(u.price) : ""}" placeholder="$ price" /></td>
         <td class="num"><input class="input sfc-up-cost" type="number" min="0" step="1" inputmode="decimal" data-id="${u.id}" value="${u.cost ? esc(u.cost) : ""}" placeholder="$ SFC cost" /></td>
         <td class="check"><button type="button" class="btn btn-ghost btn-lock sfc-up-del" data-id="${u.id}" title="Remove">✕</button></td>
-      </tr>`).join("");
+      </tr>`;
+  }).join("");
+  const upgradePick = `
+      <select id="sfcUpgradePick" class="input sfc-up-pick" aria-label="Add upgrade">
+        <option value="">＋ Add upgrade…</option>
+        <optgroup label="Roof price list">${priceList.ROOF.upgrades.map((u) => `<option value="ROOF:${esc(u.key)}">${esc(u.label)} — ${fmtRate(u.price)}/${esc(u.unit)}</option>`).join("")}</optgroup>
+        <option value="custom">Custom upgrade — type the price</option>
+      </select>`;
   const marketingRows = sfc.marketingCredits.map((m) => `
       <tr data-id="${m.id}">
         <td><select class="input sfc-mk-type" data-id="${m.id}">${SFC_MARKETING_TYPES.map((t) => `<option value="${esc(t)}" ${t === m.type ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></td>
@@ -1883,22 +2063,23 @@ function renderSfcPricing() {
         <td class="check"><button type="button" class="btn btn-ghost btn-lock sfc-mk-del" data-id="${m.id}" title="Remove">✕</button></td>
       </tr>`).join("");
 
-  document.getElementById("sfcBody").innerHTML = sfcNavHTML({ step: "Pricing", trade: "Measurements, upgrades, credits", nextLabel: "Build estimate →" }) + `
+  document.getElementById("sfcBody").innerHTML = sfcNavHTML({ step: "Pricing", trade: "Assumptions, measurements, upgrades, credits", nextLabel: "Build estimate →" }) + `
     <div class="sfc-controls">
       <label>Client <input id="sfcClient" class="input input-wide" type="text" value="${esc(sfc.client)}" placeholder="Homeowner" /></label>
       <label>Deductible <span class="sfc-field"><input id="sfcDeductible" class="input" type="number" min="0" step="0.01" inputmode="decimal"
              value="${sfc.deductible != null ? esc(sfc.deductible) : ""}" placeholder="$" title="From the claim when stated; type it when the appraisal leaves it off" /></span></label>
     </div>
+    ${roofCard}
     <table class="sfc-form">
       <thead><tr><th class="trade">Trade</th><th class="num rcv">Contracted RCV</th><th class="num meas">Measurement</th><th class="cost">SFC cost</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
-    <p class="section-label sfc-upgrades-label">Upgrades &amp; add-ons <span class="sfc-muted">priced on top of the claim — raise the Contracted Amount, not the insurance payout</span></p>
-    <table class="sfc-form sfc-upgrades">
-      <thead><tr><th class="trade">Trade</th><th>Description</th><th class="num">Price</th><th class="num">SFC cost</th><th class="check"></th></tr></thead>
+    <p class="section-label sfc-upgrades-label">Upgrades &amp; add-ons <span class="sfc-muted">list upgrades are priced from the price list — type the quantity; custom upgrades take a typed price</span></p>
+    <table class="sfc-form sfc-upgrades sfc-upgrades-6">
+      <thead><tr><th class="trade">Trade</th><th>Upgrade</th><th class="num uq">Qty</th><th class="num up">Price</th><th class="num uc">SFC cost</th><th class="check"></th></tr></thead>
       <tbody id="sfcUpgradeRows">${upgradeRows}</tbody>
     </table>
-    <div class="sfc-upgrade-foot"><button type="button" id="sfcAddUpgrade" class="btn btn-ghost">＋ Add upgrade</button></div>
+    <div class="sfc-upgrade-foot">${upgradePick}</div>
     <p class="section-label sfc-upgrades-label">Marketing credits <span class="sfc-muted">come off the homeowner's price</span></p>
     <table class="sfc-form sfc-upgrades sfc-marketing">
       <thead><tr><th class="trade">Credit</th><th class="num">Amount</th><th class="check"></th></tr></thead>
@@ -1907,11 +2088,17 @@ function renderSfcPricing() {
     <div class="sfc-upgrade-foot"><button type="button" id="sfcAddMarketing" class="btn btn-ghost">＋ Add marketing credit</button></div>`;
 
   const snapshot = () => {
+    for (const inp of document.querySelectorAll(".sfc-roof-sq")) { const v = Number(inp.value); sfc.roof[inp.dataset.key] = v > 0 ? v : null; }
+    const pitchEl = document.getElementById("sfcRoofPitch"); if (pitchEl) sfc.roof.pitch = pitchEl.value.trim();
+    const rdEl = document.getElementById("sfcRoofRedeck"); if (rdEl) sfc.roof.redeck = rdEl.checked;
+    const rdSq = document.getElementById("sfcRoofRedeckSq"); if (rdSq) { const v = Number(rdSq.value); sfc.roof.redeckSq = v > 0 ? v : null; }
     for (const inp of document.querySelectorAll(".sfc-meas")) { const v = Number(inp.value); sfc.measurements[inp.dataset.trade] = v > 0 ? v : null; }
+    if (sfcMode("ROOF") === "list") { const rc = sfcRoofCost(); sfc.measurements.ROOF = rc ? rc.sq : null; }
     for (const inp of document.querySelectorAll(".sfc-bid")) { const v = Number(inp.value); sfc.bids[inp.dataset.trade] = v > 0 ? v : null; }
     for (const inp of document.querySelectorAll(".sfc-rate-in")) { const v = Number(inp.value); sfc.rateEdits[inp.dataset.trade] = v > 0 ? v : null; }
     for (const u of sfc.upgrades) {
       const q = (cls) => document.querySelector(`.${cls}[data-id="${u.id}"]`);
+      if (q("sfc-up-qty")) { const v = q("sfc-up-qty").value; u.qty = v === "" ? null : Math.max(0, Number(v) || 0); }
       if (q("sfc-up-trade")) u.trade = q("sfc-up-trade").value;
       if (q("sfc-up-desc")) u.description = q("sfc-up-desc").value.trim();
       if (q("sfc-up-price")) u.price = Math.max(0, Number(q("sfc-up-price").value) || 0);
@@ -1928,16 +2115,29 @@ function renderSfcPricing() {
     if (state.summary) { state.summary.deductible = sfc.deductible; syncDeductibleUI(); }
   };
   const rerender = () => { snapshot(); renderSfcPricing(); };
+  for (const el of document.querySelectorAll(".sfc-roof-sq, #sfcRoofPitch, #sfcRoofRedeck, #sfcRoofRedeckSq, .sfc-up-qty")) el.addEventListener("change", rerender);
   for (const btn of document.querySelectorAll(".sfc-mode-btn")) {
-    btn.addEventListener("click", () => { snapshot(); sfc.mode[btn.dataset.trade] = btn.classList.contains("sfc-mode-bid") ? "bid" : "measure"; renderSfcPricing(); });
+    btn.addEventListener("click", () => {
+      snapshot();
+      sfc.mode[btn.dataset.trade] = btn.classList.contains("sfc-mode-bid") ? "bid" : btn.classList.contains("sfc-mode-list") ? "list" : "measure";
+      renderSfcPricing();
+    });
   }
   for (const btn of document.querySelectorAll(".sfc-unlock")) btn.addEventListener("click", () => { snapshot(); sfc.unlocked[btn.dataset.trade] = true; renderSfcPricing(); });
   for (const btn of document.querySelectorAll(".sfc-lock")) btn.addEventListener("click", () => { snapshot(); sfc.unlocked[btn.dataset.trade] = false; sfc.rateEdits[btn.dataset.trade] = null; renderSfcPricing(); });
-  document.getElementById("sfcAddUpgrade").addEventListener("click", () => {
+  document.getElementById("sfcUpgradePick").addEventListener("change", (e) => {
+    const v = e.target.value; if (!v) return;
     snapshot();
-    sfc.upgrades.push({ id: sfcSeq++, trade: groups[0] ? groups[0].trade : TRADE_ORDER[0], description: "", price: 0, cost: 0 });
-    renderSfcPricing();
-    const last = document.querySelector("#sfcUpgradeRows tr:last-child .sfc-up-desc"); if (last) last.focus();
+    if (v === "custom") {
+      sfc.upgrades.push({ id: sfcSeq++, trade: groups[0] ? groups[0].trade : TRADE_ORDER[0], description: "", price: 0, cost: 0 });
+      renderSfcPricing();
+      const last = document.querySelector("#sfcUpgradeRows tr:last-child .sfc-up-desc"); if (last) last.focus();
+    } else {
+      const [trade, key] = v.split(":");
+      sfc.upgrades.push({ id: sfcSeq++, trade, key, qty: null, description: "", price: 0, cost: 0 });
+      renderSfcPricing();
+      const last = document.querySelector("#sfcUpgradeRows tr:last-child .sfc-up-qty"); if (last) last.focus();
+    }
   });
   for (const btn of document.querySelectorAll(".sfc-up-del")) btn.addEventListener("click", () => { snapshot(); sfc.upgrades = sfc.upgrades.filter((u) => String(u.id) !== btn.dataset.id); renderSfcPricing(); });
   for (const sel of document.querySelectorAll(".sfc-up-trade")) sel.addEventListener("change", rerender);
@@ -1951,11 +2151,47 @@ function renderSfcPricing() {
   for (const btn of document.querySelectorAll(".sfc-mk-del")) btn.addEventListener("click", () => { snapshot(); sfc.marketingCredits = sfc.marketingCredits.filter((m) => String(m.id) !== btn.dataset.id); renderSfcPricing(); });
   const finish = () => {
     snapshot();
-    sfc.upgrades = sfc.upgrades.filter((u) => u.price > 0 || u.description);
+    sfc.upgrades = sfc.upgrades.filter((u) => u.key || u.price > 0 || u.description);
     sfc.marketingCredits = sfc.marketingCredits.filter((m) => m.amount > 0);
   };
   sfcWireNav(finish, finish);
 }
+
+// ---- price list panel: owner-only. Not linked from the tool — it opens only when the URL
+// ends in /pricelist (Netlify rewrite) or carries ?pricelist / #pricelist (local server). ----
+const priceListRequested = () => /\/pricelist\/?$/i.test(location.pathname) || /(^|[?&#])pricelist(?![\w-])/i.test(location.search + location.hash);
+function openPriceList() {
+  const L = priceList;
+  const row = (label, cells) => `<tr><td class="pl-k">${label}</td>${cells}</tr>`;
+  const inp = (cls, key, v, unit, step = 1) => `<td class="pl-v"><span class="sfc-field"><span class="pl-cur">$</span><input class="input ${cls}" type="number" min="0" step="${step}" inputmode="decimal" data-key="${esc(key)}" value="${esc(v)}" /><span class="uom">/ ${esc(unit)}</span></span></td>`;
+  document.getElementById("priceListBody").innerHTML = `
+    <p class="disc-lead">Owner page. What roofing work costs SFC per square, and what each upgrade is charged at. Saved in this browser and used by every estimate built here.</p>
+    <p class="section-label">Roof · SFC cost</p>
+    <table class="disc-table pl-table"><tbody>
+      ${L.ROOF.shingles.map((sh) => row(esc(sh.label), inp("pl-shingle", sh.key, sh.cost, "SQ"))).join("")}
+      ${row(`Steep slope — from <input class="input pl-pitch" type="number" min="1" step="1" value="${esc(L.ROOF.steep.fromPitch)}" aria-label="Steep from pitch" />/12 and up`, inp("pl-steep", "cost", L.ROOF.steep.cost, "SQ"))}
+      ${row("Redecking", inp("pl-redeck", "cost", L.ROOF.redecking.cost, "SQ"))}
+    </tbody></table>
+    <p class="section-label">Roof · upgrades</p>
+    <table class="disc-table pl-table">
+      <thead><tr><th></th><th>Price charged</th><th>SFC cost</th></tr></thead>
+      <tbody>${L.ROOF.upgrades.map((u) => row(esc(u.label), inp("pl-up-price", u.key, u.price, u.unit) +
+        (u.costIn ? `<td class="pl-v"><span class="sfc-muted">in ${esc(u.costIn)}</span></td>` : inp("pl-up-cost", u.key, u.cost, u.unit)))).join("")}</tbody>
+    </table>`;
+  document.getElementById("priceListModal").hidden = false;
+}
+function readPriceListForm() {
+  const L = JSON.parse(JSON.stringify(priceList));
+  const n = (el, d) => { const v = Number(el.value); return el.value !== "" && Number.isFinite(v) && v >= 0 ? v : d; };
+  for (const el of document.querySelectorAll(".pl-shingle")) { const sh = L.ROOF.shingles.find((x) => x.key === el.dataset.key); if (sh) sh.cost = n(el, sh.cost); }
+  const p = document.querySelector(".pl-pitch"); if (p) L.ROOF.steep.fromPitch = n(p, L.ROOF.steep.fromPitch);
+  const st = document.querySelector(".pl-steep"); if (st) L.ROOF.steep.cost = n(st, L.ROOF.steep.cost);
+  const rd = document.querySelector(".pl-redeck"); if (rd) L.ROOF.redecking.cost = n(rd, L.ROOF.redecking.cost);
+  for (const el of document.querySelectorAll(".pl-up-price")) { const u = L.ROOF.upgrades.find((x) => x.key === el.dataset.key); if (u) u.price = n(el, u.price); }
+  for (const el of document.querySelectorAll(".pl-up-cost")) { const u = L.ROOF.upgrades.find((x) => x.key === el.dataset.key); if (u) u.cost = n(el, u.cost); }
+  return L;
+}
+function closePriceList() { document.getElementById("priceListModal").hidden = true; }
 
 // ---- the claim-breakdown summary page (page 1 of the estimate) ----
 function claimSummaryPageHTML(deductibleOverride) {
@@ -2116,9 +2352,14 @@ function renderSfcEstimate() {
   const unit = (n, meas, uom) => (meas > 0 ? `${fmtRate(n / meas)}<span class="per">/${esc(uom)}</span>` : "—");
   const cell = (n, x) => (per && x.uom && x.meas > 0 ? unit(n, x.meas, x.uom) : money0(n));
   const pctCls = (pct) => (pct == null ? "" : pct >= SFC_TARGET_MARGIN ? "pos" : "neg");
+  const roofNote = (x) => {
+    if (x.g.trade !== "ROOF" || sfcMode("ROOF") !== "list") return "";
+    const rc = sfcRoofCost();
+    return rc ? `<div class="snap-sub">${rc.parts.map((p) => `${esc(p.label)} ${esc(p.sq)} SQ`).join(" · ")}</div>` : "";
+  };
   const snapRows = rows.map((x) => `
       <tr>
-        <td class="left trade">${esc(x.g.trade)}${x.ups.map((u) => `<div class="snap-sub">– ${esc(u.description || "upgrade")} <span class="snap-up">+${money0(u.price)}</span></div>`).join("")}</td>
+        <td class="left trade">${esc(x.g.trade)}${roofNote(x)}${x.ups.map((u) => `<div class="snap-sub">– ${esc(u.description || "upgrade")} <span class="snap-up">+${money0(u.price)}</span></div>`).join("")}</td>
         <td class="center">${x.meas != null && x.uom ? `${esc(x.meas)} ${esc(x.uom)}` : ""}</td>
         <td class="sub">${x.payRCV > 0 ? cell(x.payACV, x) : "—"}</td>
         <td class="sub">${x.payRCV > 0 ? cell(x.payRCV, x) : "—"}</td>
@@ -2290,6 +2531,15 @@ function init() {
   });
   document.getElementById("sfcPrintBtn").addEventListener("click", () => window.print());
   document.getElementById("sfcCloseBtn").addEventListener("click", closeSfcModal);
+  // Price list panel (hidden owner page). Save re-prices an open pricing screen.
+  if (priceListRequested()) openPriceList();
+  document.getElementById("plSaveBtn").addEventListener("click", () => {
+    priceListSave(readPriceListForm()); closePriceList();
+    if (document.querySelector("#sfcBody .sfc-form") && !document.getElementById("sfcModal").hidden) renderSfcPricing();
+  });
+  document.getElementById("plResetBtn").addEventListener("click", () => { priceListReset(); openPriceList(); });
+  document.getElementById("plCancelBtn").addEventListener("click", closePriceList);
+  document.getElementById("plBackdrop").addEventListener("click", closePriceList);
   document.getElementById("sfcBackdrop").addEventListener("click", closeSfcModal);
 
   // Summary modal controls: download, and close via ✕ / backdrop / Escape.
