@@ -1960,10 +1960,10 @@ function renderSfcAssumptions() {
     return `
       <tr data-i="${i}">
         <td class="trade"><span class="trade-cell">${esc(spec.label)}</span>${spec.bid ? `<span class="sfc-bid-tag">not on price list</span>` : ""}</td>
-        <td class="num"><span class="sfc-field"><input class="input sfc-rt-sq" type="number" min="0" step="0.01" inputmode="decimal" data-i="${i}"
+        <td class="num sqc"><span class="sfc-field"><input class="input sfc-rt-sq" type="number" min="0" step="0.01" inputmode="decimal" data-i="${i}"
             value="${t.sq != null ? esc(t.sq) : ""}" placeholder="0" /><span class="uom">SQ</span></span></td>
-        <td class="num bidc">${spec.bid ? `<span class="sfc-field"><span class="pl-cur">$</span><input class="input sfc-rt-bid${Number(t.bid) > 0 ? "" : " missing"}" type="number" min="0" step="1" inputmode="decimal" data-i="${i}"
-            value="${t.bid != null ? esc(t.bid) : ""}" placeholder="estimated cost" title="Estimated cost from management" /></span>` : ""}</td>
+        ${needsBid ? `<td class="num bidc">${spec.bid ? `<span class="sfc-field"><span class="pl-cur">$</span><input class="input sfc-rt-bid${Number(t.bid) > 0 ? "" : " missing"}" type="number" min="0" step="1" inputmode="decimal" data-i="${i}"
+            value="${t.bid != null ? esc(t.bid) : ""}" placeholder="0" title="Estimated cost from management" /></span>` : ""}</td>` : ""}
         <td class="check"><button type="button" class="btn btn-ghost btn-lock sfc-rt-del" data-i="${i}" title="Remove">✕</button></td>
       </tr>`;
   }).join("");
@@ -1988,8 +1988,8 @@ function renderSfcAssumptions() {
         <div class="sfc-flow-body">
           <p class="sfc-flow-title">Squares per roof type</p>
           ${r.types.length ? `
-          <table class="sfc-form sfc-rooftypes">
-            <thead><tr><th class="trade">Roof type</th><th class="num">Squares</th><th class="num bidc">${needsBid ? "Estimated cost" : ""}</th><th class="check"></th></tr></thead>
+          <table class="sfc-form sfc-rooftypes${needsBid ? " has-bid" : ""}">
+            <thead><tr><th class="trade">Roof type</th><th class="num sqc">Squares</th>${needsBid ? `<th class="num bidc">Estimated cost</th>` : ""}<th class="check"></th></tr></thead>
             <tbody>${typeRows}</tbody>
           </table>
           <div class="sfc-as-total">Total roof <b>${esc(total)} SQ</b></div>` : `<p class="sfc-flow-hint">Add a roof type first.</p>`}

@@ -1147,9 +1147,20 @@ body.sfc-open { overflow: hidden; }
 .sfc-flow-field .sfc-mode { margin: 0; }
 .sfc-flow-field .sfc-mode-btn { height: 42px; padding: 0 18px; font-size: 14px; }
 .sfc-flow .sfc-as-flag { padding: 0 0 0 6px; font-size: 14px; }
-.sfc-rooftypes { max-width: 560px; margin-bottom: 6px; }
-.sfc-rooftypes th.trade, .sfc-rooftypes td.trade { width: 55%; }
-.sfc-rooftypes .sfc-field { justify-content: flex-end; }
+/* Roof-type table: fixed, aligned columns; the estimated-cost column exists only when a
+   bid-required type is on the roof. Every input is the same width so the rows line up. */
+.sfc-rooftypes { width: 100%; max-width: none; margin-bottom: 6px; }
+.sfc-rooftypes th.trade, .sfc-rooftypes td.trade { width: auto; }
+.sfc-rooftypes th.sqc, .sfc-rooftypes td.sqc { width: 190px; }
+.sfc-rooftypes th.bidc, .sfc-rooftypes td.bidc { width: 230px; }
+.sfc-rooftypes th.check, .sfc-rooftypes td.check { width: 56px; }
+.sfc-rooftypes .sfc-field { display: inline-flex; justify-content: flex-end; align-items: center; gap: 8px; white-space: nowrap; }
+.sfc-rooftypes .input { width: 120px; min-width: 120px; }
+.sfc-rooftypes .uom { width: 28px; }
+.sfc-rooftypes .sfc-rt-bid { width: 150px; min-width: 150px; text-align: right; }
+.sfc-rooftypes .sfc-rt-bid.missing { border-color: var(--neg); background: #fef2f2; }
+.sfc-rooftypes .pl-cur { width: 12px; text-align: right; }
+.sfc-flow .sfc-as-total { padding-right: 56px; }
 .sfc-bid-tag { display: block; font-size: 11.5px; font-weight: 700; color: var(--neg); letter-spacing: 0.04em; text-transform: uppercase; margin-top: 2px; }
 .sfc-bid-banner { display: flex; flex-direction: column; gap: 4px; padding: 16px 18px; border: 2px solid var(--neg); border-radius: 8px; background: #fef2f2; color: var(--ink); margin: 6px 0 18px; }
 .sfc-bid-banner b { font-size: 18px; letter-spacing: 0.06em; color: var(--neg); }
@@ -1157,7 +1168,3 @@ body.sfc-open { overflow: hidden; }
 .sfc-form td.cost .sfc-bidreq { display: block; width: max-content; font-size: 12px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--neg); margin-bottom: 6px; }
 .sfc-flow-pair { display: flex; flex-wrap: wrap; gap: 10px 32px; margin-bottom: 6px; }
 .sfc-flow-k { font-size: 14px; font-weight: 600; color: var(--ink-soft); min-width: 140px; }
-.sfc-rooftypes { max-width: 760px; }
-.sfc-rooftypes th.bidc, .sfc-rooftypes td.bidc { width: 30%; }
-.sfc-rooftypes .sfc-rt-bid { width: 150px; text-align: right; }
-.sfc-rooftypes .sfc-rt-bid.missing { border-color: var(--neg); background: #fef2f2; }
