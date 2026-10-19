@@ -1492,21 +1492,22 @@ const PRICE_LIST_VERSION = 1;
 const PRICE_LIST_KEY = "sfc-claim-breakdown.priceList.v1";
 const PRICE_LIST_DEFAULT = {
   ROOF: {
-    // Base install cost per square by shingle class. A roof can mix classes (squares of each).
+    // Install cost per square by shingle class. Shingle roofs are ASSUMED the lowest class
+    // (class2 = base); a Class 3 / Class 4 upgrade adds that class's cost difference per square.
     shingles: [
-      { key: "class2", label: "Class 2 shingle", cost: 350 },
+      { key: "class2", label: "Class 2 shingle (base)", cost: 350 },
       { key: "class3", label: "Class 3 shingle", cost: 380 },
       { key: "class4", label: "Class 4 shingle", cost: 425 },
     ],
-    // Steep slope: every square costs this much more once the pitch reaches fromPitch/12.
+    // Steep slope: squares at fromPitch/12 or steeper cost this much more per square.
     steep: { fromPitch: 8, cost: 30 },
     redecking: { cost: 80 },
     // Upgrades charged to the homeowner. costIn = the SFC cost already sits in that assumption
     // above (so the upgrade adds price, not cost). qtyFrom = quantity follows the assumptions
     // until the estimator types one.
     upgrades: [
-      { key: "class3", label: "Class 3 Upgrade", unit: "SQ", price: 60, cost: 0, costIn: "shingle type", qtyFrom: "class3" },
-      { key: "class4", label: "Class 4 Upgrade", unit: "SQ", price: 150, cost: 0, costIn: "shingle type", qtyFrom: "class4" },
+      { key: "class3", label: "Class 3 Upgrade", unit: "SQ", price: 60, classKey: "class3", qtyFrom: "shingle" },
+      { key: "class4", label: "Class 4 Upgrade", unit: "SQ", price: 150, classKey: "class4", qtyFrom: "shingle" },
       { key: "redecking", label: "Redecking", unit: "SQ", price: 120, cost: 0, costIn: "redecking", qtyFrom: "redecking" },
       { key: "ridgevent", label: "Ridge Vent Installation", unit: "LF", price: 20, cost: 0 },
       { key: "warranty", label: "Warranty (Tamko)", unit: "SQ", price: 200, cost: 75, qtyFrom: "total" },
@@ -1522,7 +1523,7 @@ function priceListApply(base, o) {
   for (const sh of base.ROOF.shingles) if (R.shingles && R.shingles[sh.key] != null) sh.cost = num(R.shingles[sh.key], sh.cost);
   if (R.steep) { base.ROOF.steep.fromPitch = num(R.steep.fromPitch, base.ROOF.steep.fromPitch); base.ROOF.steep.cost = num(R.steep.cost, base.ROOF.steep.cost); }
   if (R.redecking) base.ROOF.redecking.cost = num(R.redecking.cost, base.ROOF.redecking.cost);
-  for (const u of base.ROOF.upgrades) { const x = R.upgrades && R.upgrades[u.key]; if (x) { u.price = num(x.price, u.price); u.cost = num(x.cost, u.cost); } }
+  for (const u of base.ROOF.upgrades) { const x = R.upgrades && R.upgrades[u.key]; if (x) { u.price = num(x.price, u.price); if (!u.classKey) u.cost = num(x.cost, u.cost); } }
 }
 function priceListLoad() {
   const base = priceListClone();
@@ -1533,48 +1534,53 @@ function priceListOverrides(L) {
   return { version: PRICE_LIST_VERSION, ROOF: {
     shingles: Object.fromEntries(L.ROOF.shingles.map((sh) => [sh.key, sh.cost])),
     steep: { ...L.ROOF.steep }, redecking: { ...L.ROOF.redecking },
-    upgrades: Object.fromEntries(L.ROOF.upgrades.map((u) => [u.key, { price: u.price, cost: u.cost }])),
+    upgrades: Object.fromEntries(L.ROOF.upgrades.map((u) => [u.key, u.classKey ? { price: u.price } : { price: u.price, cost: u.cost }])),
   } };
 }
 let priceList = priceListLoad();
 function priceListSave(L) { priceList = L; try { localStorage.setItem(PRICE_LIST_KEY, JSON.stringify(priceListOverrides(L))); } catch (_) { /* private mode */ } }
 function priceListReset() { priceList = priceListClone(); try { localStorage.removeItem(PRICE_LIST_KEY); } catch (_) { /* private mode */ } }
 const sfcHasPriceList = (trade) => !!priceList[trade];
-// Roof types the assumptions page offers. Shingle classes price from the list; tile, metal
-// and modbit are not on it — the roof must be bid before it can be priced.
+// Roof types the assumptions page offers. Shingles price from the list at the lowest class
+// (upgrades raise it); tile, metal and modbit are not on it — bid before pricing.
 const ROOF_TYPES = [
-  { key: "class2", label: "Shingle · Class 2" },
-  { key: "class3", label: "Shingle · Class 3" },
-  { key: "class4", label: "Shingle · Class 4" },
+  { key: "shingle", label: "Shingles" },
   { key: "tile", label: "Tile", bid: true },
   { key: "metal", label: "Metal", bid: true },
   { key: "modbit", label: "Modbit", bid: true },
 ];
 const roofTypeSpec = (key) => ROOF_TYPES.find((t) => t.key === key) || { key, label: key };
-// roof.types = [{ key, sq }] in the order they were added.
-const sfcRoofDefaults = () => ({ types: [], pitch: "", redeck: false, redeckSq: null });
+// roof.types = [{ key, sq }] in the order they were added. steepSq / walkSq: squares at the
+// steep pitch or steeper, and under it (pitch can differ across a roof).
+const sfcRoofDefaults = () => ({ types: [], steepSq: null, walkSq: null, redeck: false, redeckSq: null });
 const sfcRoofTypes = () => ((sfc.roof && sfc.roof.types) || []);
 const sfcRoofNeedsBid = () => sfcRoofTypes().some((t) => roofTypeSpec(t.key).bid);
 const sfcRoofTotalSq = () => Math.round(sfcRoofTypes().reduce((a, t) => a + Math.max(0, Number(t.sq) || 0), 0) * 100) / 100;
 const sfcRoofSqOf = (key) => sfcRoofTypes().filter((t) => t.key === key).reduce((a, t) => a + Math.max(0, Number(t.sq) || 0), 0);
-// "7", "7/12", "7:12", "7.5/12" → 7 / 7.5; null when nothing numeric was typed.
-function parsePitch(v) { const m = /(\d+(?:\.\d+)?)/.exec(String(v == null ? "" : v)); return m ? Number(m[1]) : null; }
+// The lowest shingle class on the list — what every shingle roof is assumed to be.
+const sfcShingleBase = () => priceList.ROOF.shingles.find((sh) => sh.key === "class2") || priceList.ROOF.shingles[0];
+// Per-unit SFC cost of a list upgrade: a class upgrade costs the class's difference over base.
+function sfcUpgradeUnitCost(spec) {
+  if (!spec.classKey) return Number(spec.cost) || 0;
+  const cls = priceList.ROOF.shingles.find((sh) => sh.key === spec.classKey);
+  return cls ? Math.max(0, cls.cost - sfcShingleBase().cost) : 0;
+}
 // Roof assumptions → SFC cost. null until at least one square is entered, and null for a
 // roof that needs a bid (tile / metal / modbit anywhere on it).
 function sfcRoofCost() {
   const L = priceList.ROOF, r = sfc.roof || sfcRoofDefaults();
   if (sfcRoofNeedsBid()) return null;
   const sqOf = (k) => Math.max(0, Number(r[k]) || 0);
-  const parts = L.shingles.map((sh) => ({ key: sh.key, label: roofTypeSpec(sh.key).label, sq: sfcRoofSqOf(sh.key), rate: sh.cost, cost: sfcRoofSqOf(sh.key) * sh.cost })).filter((p) => p.sq > 0);
-  const sq = Math.round(parts.reduce((a, p) => a + p.sq, 0) * 100) / 100;
+  const base = sfcShingleBase();
+  const sq = sfcRoofSqOf("shingle");
   if (!(sq > 0)) return null;
-  const pitch = parsePitch(r.pitch);
-  const steep = pitch != null && pitch >= L.steep.fromPitch;
-  if (steep) parts.push({ key: "steep", label: `Steep slope ${pitch}/12`, sq, rate: L.steep.cost, cost: sq * L.steep.cost });
+  const parts = [{ key: "shingle", label: "Shingles", sq, rate: base.cost, cost: sq * base.cost }];
+  const steepSq = Math.min(sqOf("steepSq"), sq);
+  if (steepSq > 0) parts.push({ key: "steep", label: `Steep (${L.steep.fromPitch}/12+)`, sq: steepSq, rate: L.steep.cost, cost: steepSq * L.steep.cost });
   const redeckSq = r.redeck ? sqOf("redeckSq") : 0;
   if (redeckSq > 0) parts.push({ key: "redecking", label: "Redecking", sq: redeckSq, rate: L.redecking.cost, cost: redeckSq * L.redecking.cost });
   const cost = parts.reduce((a, p) => a + p.cost, 0);
-  return { sq, pitch, steep, redeckSq, parts, cost, perSq: cost / sq };
+  return { sq, steepSq, redeckSq, parts, cost, perSq: cost / sq };
 }
 // Upgrades picked from the list carry a key + quantity; price and cost are computed from the
 // list every time they are read, so a price-list edit flows through automatically.
@@ -1584,12 +1590,13 @@ function sfcUpgradeAutoQty(spec) {
   const rc = sfcRoofCost(); if (!rc) return null;
   if (spec.qtyFrom === "total") return rc.sq;
   if (spec.qtyFrom === "redecking") return rc.redeckSq || null;
+  if (spec.qtyFrom === "shingle") return rc.sq;
   const sq = sfcRoofSqOf(spec.qtyFrom); return sq > 0 ? sq : null;
 }
 function sfcResolveUpgrade(u) {
   const spec = sfcUpgradeSpec(u); if (!spec) return u;
   const qty = u.qty != null ? u.qty : sfcUpgradeAutoQty(spec) || 0;
-  return { ...u, qty, price: qty * spec.price, cost: qty * spec.cost, description: `${spec.label}${qty > 0 ? ` (${qty} ${spec.unit})` : ""}` };
+  return { ...u, qty, price: qty * spec.price, cost: qty * sfcUpgradeUnitCost(spec), description: `${spec.label}${qty > 0 ? ` (${qty} ${spec.unit})` : ""}` };
 }
 
 // credits: lineKey -> true when the line's ACV is credited (line leaves the contracted scope).
@@ -1601,7 +1608,7 @@ let sfc = {
   pricing: null, measurements: {}, bids: {}, unlocked: {}, rateEdits: {}, mode: {}, client: "", perUnit: false,
   rates: null, credits: {}, deductible: null, step: 0, itemsRef: null,
   upgrades: [], marketingCredits: [],
-  roof: { types: [], pitch: "", redeck: false, redeckSq: null }, // roof assumptions (own step)
+  roof: { types: [], steepSq: null, walkSq: null, redeck: false, redeckSq: null }, // roof assumptions (own step)
 };
 let sfcSeq = 1;
 
@@ -1942,10 +1949,12 @@ function renderSfcAssumptions() {
   }
   const r = sfc.roof;
   const L = priceList.ROOF;
-  const pitch = parsePitch(r.pitch);
-  const steep = pitch != null && pitch >= L.steep.fromPitch;
   const needsBid = sfcRoofNeedsBid();
   const total = sfcRoofTotalSq();
+  const pitchSum = Math.round(((Number(r.steepSq) || 0) + (Number(r.walkSq) || 0)) * 100) / 100;
+  const pitchNote = total > 0 && pitchSum > 0 && Math.abs(pitchSum - total) > 0.01
+    ? `<span class="sfc-as-flag on">Pitch squares total ${esc(pitchSum)} SQ — roof is ${esc(total)} SQ</span>`
+    : total > 0 && pitchSum > 0 ? `<span class="sfc-as-flag">Matches the roof total</span>` : "";
   const used = new Set(r.types.map((t) => t.key));
   const typeRows = r.types.map((t, i) => {
     const spec = roofTypeSpec(t.key);
@@ -1989,8 +1998,14 @@ function renderSfcAssumptions() {
         <div class="sfc-flow-n">3</div>
         <div class="sfc-flow-body">
           <p class="sfc-flow-title">Pitch</p>
-          <span class="sfc-field sfc-flow-field"><input id="sfcRoofPitch" class="input" type="text" inputmode="decimal" value="${esc(r.pitch || "")}" placeholder="7" /><span class="uom">/12</span>
-            <span class="sfc-as-flag${steep ? " on" : ""}">${pitch == null ? "" : steep ? "Steep slope" : "Walkable"}</span></span>
+          <p class="sfc-flow-hint">Pitch can change across a roof — split the squares.</p>
+          <div class="sfc-flow-pair">
+            <label class="sfc-flow-field"><span class="sfc-flow-k">${esc(L.steep.fromPitch)}/12 and steeper</span>
+              <input id="sfcRoofSteepSq" class="input" type="number" min="0" step="0.01" inputmode="decimal" value="${r.steepSq != null ? esc(r.steepSq) : ""}" placeholder="0" /><span class="uom">SQ</span></label>
+            <label class="sfc-flow-field"><span class="sfc-flow-k">Under ${esc(L.steep.fromPitch)}/12</span>
+              <input id="sfcRoofWalkSq" class="input" type="number" min="0" step="0.01" inputmode="decimal" value="${r.walkSq != null ? esc(r.walkSq) : ""}" placeholder="0" /><span class="uom">SQ</span></label>
+          </div>
+          ${pitchNote}
         </div>
       </li>
       <li class="sfc-flow-step">
@@ -2015,7 +2030,8 @@ function renderSfcAssumptions() {
 
   const snapshot = () => {
     for (const inp of document.querySelectorAll(".sfc-rt-sq")) { const t = r.types[Number(inp.dataset.i)]; if (t) { const v = Number(inp.value); t.sq = v > 0 ? v : null; } }
-    const pitchEl = document.getElementById("sfcRoofPitch"); if (pitchEl) r.pitch = pitchEl.value.trim();
+    const stEl = document.getElementById("sfcRoofSteepSq"); if (stEl) { const v = Number(stEl.value); r.steepSq = v > 0 ? v : null; }
+    const wkEl = document.getElementById("sfcRoofWalkSq"); if (wkEl) { const v = Number(wkEl.value); r.walkSq = v > 0 ? v : null; }
     const rdSq = document.getElementById("sfcRoofRedeckSq"); if (rdSq) { const v = Number(rdSq.value); r.redeckSq = v > 0 ? v : null; }
     const sq = sfcRoofTotalSq();
     sfc.measurements.ROOF = sq > 0 ? sq : null; // the roof's quantity everywhere downstream
@@ -2026,7 +2042,7 @@ function renderSfcAssumptions() {
     snapshot(); r.types.push({ key, sq: null }); renderSfcAssumptions();
     const last = document.querySelector(".sfc-rooftypes tbody tr:last-child .sfc-rt-sq"); if (last) last.focus();
   });
-  for (const el of document.querySelectorAll(".sfc-rt-sq, #sfcRoofPitch, #sfcRoofRedeckSq")) el.addEventListener("change", rerender);
+  for (const el of document.querySelectorAll(".sfc-rt-sq, #sfcRoofSteepSq, #sfcRoofWalkSq, #sfcRoofRedeckSq")) el.addEventListener("change", rerender);
   for (const btn of document.querySelectorAll(".sfc-rt-del")) btn.addEventListener("click", () => { snapshot(); r.types.splice(Number(btn.dataset.i), 1); renderSfcAssumptions(); });
   for (const btn of document.querySelectorAll(".sfc-redeck-btn")) btn.addEventListener("click", () => {
     snapshot(); r.redeck = btn.dataset.v === "1"; if (!r.redeck) r.redeckSq = null; renderSfcAssumptions();
@@ -2120,8 +2136,8 @@ function renderSfcPricing() {
       const ru = sfcResolveUpgrade(u);
       const auto = sfcUpgradeAutoQty(spec);
       const costCell = spec.costIn
-        ? `<span class="sfc-muted" title="SFC cost is already in the ${esc(spec.costIn)} assumption above">in ${esc(spec.costIn)}</span>`
-        : spec.cost > 0
+        ? `<span class="sfc-muted" title="SFC cost is already in the ${esc(spec.costIn)} assumption">in ${esc(spec.costIn)}</span>`
+        : sfcUpgradeUnitCost(spec) > 0
           ? fmtUSD(ru.cost)
           : `<span class="sfc-warn" title="Set this upgrade's SFC cost in the price list">no SFC cost set</span>`;
       return `
@@ -2255,18 +2271,19 @@ function openPriceList() {
   const row = (label, cells) => `<tr><td class="pl-k">${label}</td>${cells}</tr>`;
   const inp = (cls, key, v, unit, step = 1) => `<td class="pl-v"><span class="sfc-field"><span class="pl-cur">$</span><input class="input ${cls}" type="number" min="0" step="${step}" inputmode="decimal" data-key="${esc(key)}" value="${esc(v)}" /><span class="uom">/ ${esc(unit)}</span></span></td>`;
   document.getElementById("priceListBody").innerHTML = `
-    <p class="disc-lead">Owner page. What roofing work costs SFC per square, and what each upgrade is charged at. Saved in this browser and used by every estimate built here.</p>
+    <p class="disc-lead">Owner page. What roofing work costs SFC per square, and what each upgrade is charged at. Shingle roofs are priced at the base class; a class upgrade adds that class's cost difference. Saved in this browser and used by every estimate built here.</p>
     <p class="section-label">Roof · SFC cost</p>
     <table class="disc-table pl-table"><tbody>
       ${L.ROOF.shingles.map((sh) => row(esc(sh.label), inp("pl-shingle", sh.key, sh.cost, "SQ"))).join("")}
-      ${row(`Steep slope — from <input class="input pl-pitch" type="number" min="1" step="1" value="${esc(L.ROOF.steep.fromPitch)}" aria-label="Steep from pitch" />/12 and up`, inp("pl-steep", "cost", L.ROOF.steep.cost, "SQ"))}
+      ${row(`Steep slope — squares at <input class="input pl-pitch" type="number" min="1" step="1" value="${esc(L.ROOF.steep.fromPitch)}" aria-label="Steep from pitch" />/12 and steeper`, inp("pl-steep", "cost", L.ROOF.steep.cost, "SQ"))}
       ${row("Redecking", inp("pl-redeck", "cost", L.ROOF.redecking.cost, "SQ"))}
     </tbody></table>
     <p class="section-label">Roof · upgrades</p>
     <table class="disc-table pl-table">
       <thead><tr><th></th><th>Price charged</th><th>SFC cost</th></tr></thead>
       <tbody>${L.ROOF.upgrades.map((u) => row(esc(u.label), inp("pl-up-price", u.key, u.price, u.unit) +
-        (u.costIn ? `<td class="pl-v"><span class="sfc-muted">in ${esc(u.costIn)}</span></td>` : inp("pl-up-cost", u.key, u.cost, u.unit)))).join("")}</tbody>
+        (u.classKey ? `<td class="pl-v"><span class="sfc-muted">${fmtRate(sfcUpgradeUnitCost(u))} / SQ over base <em>(class cost − base)</em></span></td>`
+          : u.costIn ? `<td class="pl-v"><span class="sfc-muted">in ${esc(u.costIn)}</span></td>` : inp("pl-up-cost", u.key, u.cost, u.unit)))).join("")}</tbody>
     </table>`;
   document.getElementById("priceListModal").hidden = false;
 }
