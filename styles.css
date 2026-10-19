@@ -1126,3 +1126,28 @@ body.sfc-open { overflow: hidden; }
 .pl-table .uom { color: var(--ink-faint); font-size: 11.5px; font-weight: 700; }
 .pl-cur { color: var(--ink-faint); font-weight: 600; }
 .pl-panel .section-label { margin: 14px 0 6px; }
+
+/* ---- Assumptions step: a numbered flow ---- */
+.sfc-flow { list-style: none; margin: 0 0 18px; padding: 0; }
+.sfc-flow-step { display: grid; grid-template-columns: 44px 1fr; gap: 16px; padding: 18px 0; border-bottom: 1px solid var(--rule); }
+.sfc-flow-step.off { opacity: 0.55; }
+.sfc-flow-n { width: 36px; height: 36px; border-radius: 50%; background: var(--accent); color: #fff; font-weight: 800; font-size: 16px; display: flex; align-items: center; justify-content: center; }
+.sfc-flow-title { margin: 6px 0 4px; font-size: 18px; font-weight: 800; color: var(--ink); }
+.sfc-flow-hint { margin: 0 0 10px; font-size: 13.5px; color: var(--ink-soft); }
+.sfc-flow-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
+.sfc-chip { display: inline-block; padding: 6px 12px; border-radius: 999px; background: var(--wash); border: 1px solid var(--rule-strong); font-size: 13.5px; font-weight: 700; color: var(--ink); }
+.sfc-chip.bid { background: #fef2f2; border-color: #fca5a5; color: var(--neg); }
+.sfc-flow-field { display: inline-flex; align-items: center; gap: 10px; }
+.sfc-flow-field .input { width: 110px; height: 42px; font-size: 17px; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+.sfc-flow-field .uom { color: var(--ink-faint); font-size: 12px; font-weight: 700; letter-spacing: 0.04em; }
+.sfc-flow-field .sfc-mode { margin: 0; }
+.sfc-flow-field .sfc-mode-btn { height: 42px; padding: 0 18px; font-size: 14px; }
+.sfc-flow .sfc-as-flag { padding: 0 0 0 6px; font-size: 14px; }
+.sfc-rooftypes { max-width: 560px; margin-bottom: 6px; }
+.sfc-rooftypes th.trade, .sfc-rooftypes td.trade { width: 55%; }
+.sfc-rooftypes .sfc-field { justify-content: flex-end; }
+.sfc-bid-tag { display: block; font-size: 11.5px; font-weight: 700; color: var(--neg); letter-spacing: 0.04em; text-transform: uppercase; margin-top: 2px; }
+.sfc-bid-banner { display: flex; flex-direction: column; gap: 4px; padding: 16px 18px; border: 2px solid var(--neg); border-radius: 8px; background: #fef2f2; color: var(--ink); margin: 6px 0 18px; }
+.sfc-bid-banner b { font-size: 18px; letter-spacing: 0.06em; color: var(--neg); }
+.sfc-bid-banner span { font-size: 14px; color: var(--ink-soft); }
+.sfc-form td.cost .sfc-bidreq { display: block; width: max-content; font-size: 12px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--neg); margin-bottom: 6px; }
