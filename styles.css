@@ -1217,3 +1217,6 @@ body.sfc-open { overflow: hidden; }
    and the estimate's working screens scroll inside the full-screen panel. */
 body.pl-mode { display: block; overflow: auto; }
 #sfcModal .modal-panel.sfc-panel .modal-body { flex: 1 1 auto; min-height: 0; overflow: auto; -webkit-overflow-scrolling: touch; }
+/* Upgrade lines under a trade on the snapshot: name on the left, price flush right */
+.snap .snap-sub.snap-upline { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; max-width: none; }
+.snap .snap-sub.snap-upline .snap-up { margin-left: 0; white-space: nowrap; }

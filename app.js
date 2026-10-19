@@ -1727,7 +1727,7 @@ function sfcUpgradeSpec(u) { const L = priceList[u.trade]; return u.key && L ? L
 function sfcResolveUpgrade(u) {
   const spec = sfcUpgradeSpec(u); if (!spec) return u;
   const qty = Math.max(0, Number(u.qty) || 0);
-  return { ...u, qty, price: qty * spec.price, cost: qty * sfcUpgradeUnitCost(spec), description: `${spec.label}${qty > 0 ? ` (${qty} ${spec.unit})` : ""}` };
+  return { ...u, qty, price: qty * spec.price, cost: qty * sfcUpgradeUnitCost(spec), description: spec.label };
 }
 
 // credits: lineKey -> true when the line's ACV is credited (line leaves the contracted scope).
@@ -2877,7 +2877,7 @@ function renderSfcEstimate() {
   const snapRows = rows.map((x) => `
       <tr>
         <td class="left supp">${esc(sfcSuppStatus(x.g.trade, x.c))}</td>
-        <td class="left trade">${esc(x.g.trade)}${x.ups.map((u) => `<div class="snap-sub">– ${esc(u.description || "upgrade")} <span class="snap-up">+${money0(u.price)}</span></div>`).join("")}</td>
+        <td class="left trade">${esc(x.g.trade)}${x.ups.map((u) => `<div class="snap-sub snap-upline"><span>– ${esc(u.description || "upgrade")}</span><span class="snap-up">+${money0(u.price)}</span></div>`).join("")}</td>
         <td class="center">${x.meas != null && x.uom ? `${esc(x.meas)} ${esc(x.uom)}` : ""}</td>
         <td class="sub">${x.payRCV > 0 ? cell(x.payACV, x) : "—"}</td>
         <td class="sub">${x.payRCV > 0 ? cell(x.payRCV, x) : "—"}</td>
