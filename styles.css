@@ -1200,3 +1200,20 @@ body.sfc-open { overflow: hidden; }
 .pl-tab:hover { background: var(--wash); }
 .pl-tab.current { background: var(--accent); border-color: var(--accent); color: #fff; }
 .pl-trade { border-bottom: 0; }
+/* Step numbers come from a counter so the supplement-status question can sit first everywhere */
+.sfc-flow { counter-reset: step; }
+.sfc-flow-step { counter-increment: step; }
+.sfc-flow-n::before { content: counter(step); }
+.sfc-flow-supp { background: var(--wash); margin: 0 -8px; padding-left: 8px; padding-right: 8px; border-radius: 10px; border-bottom: 0; }
+.sfc-mode-big { margin: 4px 0 6px; }
+.sfc-mode-big .sfc-mode-btn { height: 46px; padding: 0 20px; font-size: 14px; letter-spacing: 0.03em; }
+.sfc-supp-hint { margin: 0; font-weight: 600; }
+.sfc-supp-hint.ok { color: var(--pos); }
+.sfc-supp-tag { display: inline-block; font-size: 11px; font-weight: 800; letter-spacing: 0.04em; padding: 5px 9px; border-radius: 6px; background: var(--wash); color: var(--ink-soft); white-space: nowrap; }
+.sfc-supp-tag.doing { background: #ecfdf3; color: var(--pos); }
+.sfc-supp-tag.notdoing { background: #fef2f2; color: var(--neg); }
+.sfc-supp-tag.await { background: #fffbeb; color: #b45309; }
+/* Scrolling: the owner page lives in the normal document (the app shell locks body overflow),
+   and the estimate's working screens scroll inside the full-screen panel. */
+body.pl-mode { display: block; overflow: auto; }
+#sfcModal .modal-panel.sfc-panel .modal-body { flex: 1 1 auto; min-height: 0; overflow: auto; -webkit-overflow-scrolling: touch; }
